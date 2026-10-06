@@ -36,13 +36,18 @@ import {
 } from "@/lib/types";
 import { validateMediaFile } from "@/lib/validation";
 
-/** Langkah wizard. */
-type Step = "pick" | "ad" | "scan" | "done";
+/**
+ * Langkah wizard.
+ *
+ * `processing` = iklan + scan NSFW berjalan BERSAMAAN. Setelah keduanya
+ * selesai dan scan lolos, upload otomatis dimulai. Kalau scan gagal/ditolak,
+ * wizard kembali ke `pick` tanpa menunggu iklan selesai.
+ */
+type Step = "pick" | "processing" | "done";
 
 /** Tipe media yang butuh berkas (teks tidak perlu). */
 type FileMediaType = Exclude<MediaType, "text">;
 
-/** Metadata tiap tab di wizard. */
 const MEDIA_TABS: readonly {
   value: MediaType;
   label: string;
@@ -54,11 +59,6 @@ const MEDIA_TABS: readonly {
   { value: "text", label: "Teks", icon: FileTextIcon },
 ];
 
-/**
- * Atribut `accept` per tipe, diturunkan dari satu sumber kebenaran
- * (`ACCEPTED_MIME_TYPES` di `lib/types.ts`). Jangan menulis daftar MIME kedua
- * kali di sini: dua daftar pasti akan berbeda pada suatu hari.
- */
 function acceptFor(mediaType: MediaType): string | undefined {
   const types = ACCEPTED_MIME_TYPES[mediaType];
   if (!types || types.length === 0) return undefined;
@@ -67,25 +67,22 @@ function acceptFor(mediaType: MediaType): string | undefined {
 
 export interface MediaUploaderProps {
   qrCodeId: string;
-  /** Ada media lama, jadi tombolnya berbunyi "Ganti". */
   hasExistingMedia: boolean;
-  /** Dipanggil setelah server mengonfirmasi penyimpanan. */
   onUploaded: () => void;
 }
 
 /**
- * Wizard pasang/ganti media: `pick → ad → scan → done`.
+ * Wizard pasang/ganti media: `pick -> processing (ad + scan paralel) -> done`.
  *
- * Dua hal yang mudah salah dan perlu dipertahankan:
+ * Iklan dan pemindaian NSFW berjalan BERSAMAAN: user menonton iklan SEMENTARA
+ * model NSFWJS dimuat dan media dipindai. Setelah keduanya selesai dan media
+ * lolos, upload otomatis dimulai.
  *
- *  1. Durasi video dibaca dan diperiksa SEBELUM iklan. Menahan orang 8 detik
- *     iklan hanya untuk memberitahu "video Anda terlalu panjang" adalah
- *     pemborosan yang tidak perlu.
+ * Durasi video dibaca dan diperiksa SEBELUM processing. Menahan orang 8 detik
+ * iklan hanya untuk memberitahu "video Anda terlalu panjang" tidak masuk akal.
  *
- *  2. `performUpload` dideklarasikan SEBELUM `handleScanAndUpload`, karena yang
- *     kedua memakai yang pertama di dalam `useCallback`. Urutannya dibalik,
- *     `performUpload` masih ada di scope tapi dibaca sebelum diinisialisasi
- *     (error `used before defined`) saat callback pertama dibuat.
+ * `performUpload` dideklarasikan SEBELUM `handleSubmit` karena yang kedua
+ * memakai yang pertama di dalam callback.
  */
 export function MediaUploader({
   qrCodeId,
@@ -97,55 +94,38 @@ export function MediaUploader({
   const [file, setFile] = useState<File | null>(null);
   const [textContent, setTextContent] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [nsfwResult, setNsfwScanResult] = useState<NsfwScanResult | null>(null);
+  const [, setNsfwScanResult] = useState<NsfwScanResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
-  /** True bila widget gagal memberi token (error/timeout/expire). */
   const [turnstileFailed, setTurnstileFailed] = useState(false);
+  const [adPending, setAdPending] = useState(false);
 
-  /**
-   * Kunci remount untuk widget Turnstile.
-   *
-   * Token Turnstile hanya berlaku SATU KALI dan kedaluwarsa sekitar 5 menit.
-   * Setelah dipakai satu unggahan, token itu tidak boleh dikirim lagi —
-   * percobaan berikutnya akan ditolak `timeout-or-duplicate`.
-   *
-   * Naikkan kunci ini untuk memasang ulang seluruh widget, yang sekaligus
-   * membuat Cloudflare menerbitkan token baru dan memanggil `onToken` lagi.
-   * Menyimpan token basi di state sambil berharap keduanya tetap berlaku tidak
-   * berhasil.
-   */
   const [turnstileEpoch, setTurnstileEpoch] = useState(0);
 
-  /** Minta token anti-bot yang baru. Lihat `turnstileEpoch`. */
   const renewTurnstileToken = useCallback(() => {
     setTurnstileToken(null);
     setTurnstileFailed(false);
     setTurnstileEpoch((epoch) => epoch + 1);
   }, []);
 
-  // Durasi dibaca sekali ketika berkas dipilih. Disimpan di ref supaya nilainya
-  // tidak ikut berubah setiap render dan tidak membuat callback di bawahnya
-  // kehilangan memoization.
   const durationRef = useRef<number | undefined>(undefined);
 
-  const isFileType = mediaType !== "text";
-  const isBusy = isScanning || isUploading;
+  // Ref untuk koordinasi paralel ad + scan. State React tidak cukup karena
+  // callback melihat snapshot saat closure dibuat, bukan nilai terkini.
+  const scanDoneRef = useRef(false);
+  const adDoneRef = useRef(false);
+  const scanPassedRef = useRef(false);
+  const uploadTriggeredRef = useRef(false);
 
-  /**
-   * Token yang benar-benar dikirim.
-   *
-   * Tanpa site key, `TurnstileWidget` tidak memuat widget sungguhan, jadi yang
-   * dipakai adalah token placeholder yang diterima server dalam mode
-   * placeholder (`isPlaceholder: true`).
-   */
+  const isFileType = mediaType !== "text";
+  const isBusy = isScanning || isUploading || adPending;
+
   const effectiveTurnstileToken = useMemo(() => {
     const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
     return siteKey && turnstileToken ? turnstileToken : PLACEHOLDER_TOKEN;
   }, [turnstileToken]);
 
-  /** Kembalikan wizard ke awal tanpa menyentuh state milik pemanggil. */
   const clearInput = useCallback(() => {
     setFile(null);
     setTextContent("");
@@ -153,7 +133,12 @@ export function MediaUploader({
     setNsfwScanResult(null);
     setIsScanning(false);
     setIsUploading(false);
+    setAdPending(false);
     durationRef.current = undefined;
+    scanDoneRef.current = false;
+    adDoneRef.current = false;
+    scanPassedRef.current = false;
+    uploadTriggeredRef.current = false;
   }, []);
 
   const handleFileChange = useCallback(
@@ -166,7 +151,6 @@ export function MediaUploader({
 
       if (!nextFile) return;
 
-      // Durasi harus diketahui sebelum validasi dan sebelum iklan.
       if (mediaType === "video") {
         try {
           durationRef.current = await readVideoDuration(nextFile);
@@ -194,12 +178,6 @@ export function MediaUploader({
     [],
   );
 
-  /**
-   * Kirim ke `POST /api/upload`.
-   *
-   * Sengaja TIDAK mengirim apa pun kalau moderasi browser menolak. Server juga
-   * akan memeriksa ulang, jadi ini penghematan kuota, bukan penjaga.
-   */
   const performUpload = useCallback(async () => {
     setIsUploading(true);
     setError(null);
@@ -237,10 +215,6 @@ export function MediaUploader({
       if (!payload.ok) {
         setError(payload.error);
         setStep("pick");
-        // Permintaan sudah sampai server, jadi token yang dikirim sudah
-        // terpakai — Cloudflare menandainya terpakai walau server menolak. Minta
-        // token baru, atau percobaan berikutnya gagal dengan
-        // `timeout-or-duplicate`.
         renewTurnstileToken();
         return;
       }
@@ -264,19 +238,40 @@ export function MediaUploader({
   ]);
 
   /**
-   * Pindai NSFW di browser, lalu unggah kalau lolos.
-   *
-   * Pemeriksaan di sini BUKAN penjaga. Secara teknis bisa dilewati dengan
-   * memodifikasi Client Component, dan itu memang diterima: gunanya UX dan
-   * menghematkan waktu server. Penentu sebenarnya ada di `lib/moderation.ts`,
-   * yang memanggil layanan NSFWJS di VPS dan bersifat fail-closed.
+   * Coba upload kalau KEDUA syarat terpenuhi: ad selesai + scan selesai & lolos.
+   * Dipanggil dari dua tempat (onAdComplete dan akhir scan). Yang sampai
+   * duluan menyimpan hasilnya; yang terakhir memicu upload.
    */
-  const handleScanAndUpload = useCallback(async () => {
-    setStep("scan");
-    setError(null);
+  const tryUploadAfterBoth = useCallback(() => {
+    if (uploadTriggeredRef.current) return;
+    if (!adDoneRef.current || !scanDoneRef.current) return;
+    if (!scanPassedRef.current) return;
 
+    uploadTriggeredRef.current = true;
+    void performUpload();
+  }, [performUpload]);
+
+  /**
+   * Mulai processing: iklan + scan NSFW secara paralel.
+   *
+   * Pemeriksaan NSFW di sini BUKAN penjaga. Secara teknis bisa dilewati
+   * dengan memodifikasi Client Component. Penentu sebenarnya ada di
+   * `lib/moderation.ts` (fail-closed).
+   */
+  const handleSubmit = useCallback(() => {
+    setStep("processing");
+    setError(null);
+    scanDoneRef.current = false;
+    adDoneRef.current = false;
+    scanPassedRef.current = false;
+    uploadTriggeredRef.current = false;
+    setAdPending(true);
+
+    // Teks tidak punya media untuk di-scan.
     if (mediaType === "text") {
-      await performUpload();
+      scanDoneRef.current = true;
+      scanPassedRef.current = true;
+      setIsScanning(false);
       return;
     }
 
@@ -287,51 +282,46 @@ export function MediaUploader({
     }
 
     setIsScanning(true);
-    try {
-      // Muat model dulu supaya UI bisa membedakan "sedang mengunduh model"
-      // dari "sedang memindai berkas".
-      await getNsfwModel();
+    void (async () => {
+      try {
+        await getNsfwModel();
 
-      const result = await scanMediaFile(file, mediaType as FileMediaType);
-      setNsfwScanResult(result);
+        const result = await scanMediaFile(file, mediaType as FileMediaType);
+        setNsfwScanResult(result);
 
-      if (result.isBlocked) {
+        if (result.isBlocked) {
+          setError(
+            `Berkas ditolak: konten terdeteksi "${result.worstCategory}" ` +
+              `(skor ${result.worstScore.toFixed(2)}).`,
+          );
+          setStep("pick");
+          setAdPending(false);
+          return;
+        }
+
+        scanDoneRef.current = true;
+        scanPassedRef.current = true;
+        tryUploadAfterBoth();
+      } catch (err) {
         setError(
-          `Berkas ditolak: konten terdeteksi "${result.worstCategory}" ` +
-            `(skor ${result.worstScore.toFixed(2)}).`,
+          err instanceof Error ? `Pemindaian gagal: ${err.message}` : "Pemindaian gagal.",
         );
-        return;
+        setStep("pick");
+        setAdPending(false);
+      } finally {
+        setIsScanning(false);
       }
-
-      await performUpload();
-    } catch (err) {
-      setError(
-        err instanceof Error ? `Pemindaian gagal: ${err.message}` : "Pemindaian gagal.",
-      );
-    } finally {
-      setIsScanning(false);
-    }
-  }, [file, mediaType, performUpload]);
+    })();
+  }, [file, mediaType, tryUploadAfterBoth]);
 
   const handleAdComplete = useCallback(() => {
-    void handleScanAndUpload();
-  }, [handleScanAndUpload]);
+    adDoneRef.current = true;
+    setAdPending(false);
+    tryUploadAfterBoth();
+  }, [tryUploadAfterBoth]);
 
   const canSubmit = isFileType ? Boolean(file) : textContent.trim().length > 0;
 
-  /**
-   * Widget anti-bot belum memberi token.
-   *
-   * Hanya relevan kalau site key terisi. Tanpa site key, `turnstileToken` selalu
-   * `null` dan placeholder yang dikirim — itu memang mode yang diharapkan, bukan
-   * cacat.
-   *
-   * Dengan site key terisi, mengunggah sebelum token ada berarti mengirim
-   * `PLACEHOLDER_TOKEN` ke server yang punya secret sungguhan, dan server
-   * menolaknya dengan 403. Jadi tombol sebaiknya tidak bisa ditekan sampai
-   * widget selesai — lebih baik terlihat jelas daripada gagal dengan 403 yang
-   * membingungkan.
-   */
   const isAwaitingTurnstile = Boolean(
     process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
   ) && !turnstileToken;
@@ -404,34 +394,25 @@ export function MediaUploader({
         </Tabs>
       ) : null}
 
-      {step === "scan" ? (
+      {/* Setelah iklan selesai tapi scan/upload masih jalan, tampilkan indikator */}
+      {step === "processing" && !adPending ? (
         <div className="flex flex-col items-center gap-3 py-6 text-center">
           <Loader2Icon className="size-6 animate-spin" />
           <p className="text-sm font-medium">
-            {isNsfwModelLoading()
-              ? "Mengunduh model moderasi..."
-              : "Memindai media..."}
+            {isScanning
+              ? isNsfwModelLoading()
+                ? "Mengunduh model moderasi..."
+                : "Memindai media..."
+              : isUploading
+                ? "Mengunggah media..."
+                : "Memproses..."}
           </p>
-          {nsfwResult?.frames[0] ? (
-            <div className="flex flex-wrap justify-center gap-2">
-              {nsfwResult.frames[0]
-                .slice()
-                .sort((a, b) => b.probability - a.probability)
-                .map((prediction) => (
-                  <span
-                    key={prediction.className}
-                    className="rounded bg-muted px-2 py-1 text-xs"
-                  >
-                    {prediction.className}: {(prediction.probability * 100).toFixed(0)}%
-                  </span>
-                ))}
-            </div>
-          ) : (
+          {isScanning ? (
             <p className="text-xs text-muted-foreground">
               Pemeriksaan ini berjalan di browser. Server memverifikasi ulang
               sebelum menyimpan.
             </p>
-          )}
+          ) : null}
         </div>
       ) : null}
 
@@ -453,9 +434,6 @@ export function MediaUploader({
         </p>
       ) : null}
 
-      {/* `key` sengaja ikut naik bersama `turnstileEpoch`: itulah yang memasang
-          ulang widget dan meminta Cloudflare menerbitkan token baru. Tanpa itu,
-          widget lama tetap menampilkan token yang sudah terpakai. */}
       <TurnstileWidget
         key={turnstileEpoch}
         onToken={setTurnstileToken}
@@ -490,7 +468,7 @@ export function MediaUploader({
 
       {step === "pick" ? (
         <Button
-          onClick={() => setStep("ad")}
+          onClick={handleSubmit}
           disabled={!canSubmit || isBusy || isAwaitingTurnstile}
         >
           <UploadIcon />
@@ -498,7 +476,8 @@ export function MediaUploader({
         </Button>
       ) : null}
 
-      <AdModal open={step === "ad"} onComplete={handleAdComplete} />
+      {/* Iklan ditampilkan selama `adPending`. Scan berjalan di balik layar. */}
+      <AdModal open={step === "processing" && adPending} onComplete={handleAdComplete} />
     </div>
   );
 }

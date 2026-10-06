@@ -129,6 +129,49 @@ export async function POST(request: Request) {
     );
   }
 
+  // (4.5) Rate limit per QR.
+  //
+  // Setelah mengganti media, user ditendang dari QR itu. Baru bisa lagi
+  // setelah 3 orang lain sudah ganti, ATAU 5 jam berlalu. Ini mencegah
+  // satu orang mengunci QR dengan mengganti terus-menerus.
+  //
+  // Pengecekan di sini, SEBELUM moderasi dan upload, supaya request yang
+  // ditolak tidak membuang kuota moderasi dan Cloudinary.
+  const uploaderIp = extractClientIp(request) ?? "unknown";
+  const RATE_LIMIT_HOURS = 5;
+  const RATE_LIMIT_UNIQUE_UPLOADERS = 3;
+
+  try {
+    const rateCheckDb = getSupabaseAdminClient();
+    const { data: existing } = await rateCheckDb
+      .from("qr_medias")
+      .select("last_uploader_ip, unique_uploaders_since, updated_at")
+      .eq("qr_code_id", qrCodeId)
+      .maybeSingle();
+
+    if (existing?.last_uploader_ip === uploaderIp) {
+      const hoursSinceLastUpload =
+        (Date.now() - new Date(existing.updated_at).getTime()) / (1000 * 60 * 60);
+      const uniqueUploaders = existing.unique_uploaders_since ?? 0;
+
+      if (
+        hoursSinceLastUpload < RATE_LIMIT_HOURS &&
+        uniqueUploaders < RATE_LIMIT_UNIQUE_UPLOADERS
+      ) {
+        const hoursLeft = Math.ceil(RATE_LIMIT_HOURS - hoursSinceLastUpload);
+        return fail(
+          429,
+          `Anda baru saja mengganti media ini. Tunggu ${hoursLeft} jam lagi, ` +
+            `atau sampai ${RATE_LIMIT_UNIQUE_UPLOADERS - uniqueUploaders} orang lain mengganti.`,
+          "rate-limited",
+        );
+      }
+    }
+  } catch {
+    // Kegagalan pengecekan rate limit TIDAK boleh memblokir upload.
+    // Lebih baik lolos sekali daripada menolak upload yang sah.
+  }
+
   // (5) Moderasi server. Ini SUMBER KEBENARAN — semua langkah sebelumnya hanya UX.
   //
   // Fail-closed: kalau layanan moderasi tidak tersedia, jawabannya 503, bukan
@@ -249,18 +292,36 @@ export async function POST(request: Request) {
   // lama bisa menyisakan `media_url` yang melanggar CHECK
   // `qr_medias_payload_shape`.
   const nowIso = new Date().toISOString();
+
+  // Hitung unique_uploaders_since: kalau IP baru (beda dari terakhir), naikkan
+  // counter. Kalau IP sama, reset ke 0.
+  let newUniqueUploaders = 0;
+  try {
+    const prevCheck = getSupabaseAdminClient();
+    const { data: prev } = await prevCheck
+      .from("qr_medias")
+      .select("last_uploader_ip, unique_uploaders_since")
+      .eq("qr_code_id", qrCodeId)
+      .maybeSingle();
+
+    if (prev && prev.last_uploader_ip !== uploaderIp) {
+      newUniqueUploaders = (prev.unique_uploaders_since ?? 0) + 1;
+    }
+  } catch {
+    // Kegagalan tidak boleh memblokir upload.
+  }
+
   const row = {
     qr_code_id: qrCodeId,
     media_type: mediaType,
     media_url: newMediaUrl,
     text_content: mediaType === "text" ? textContent : null,
-    // Media baru selalu mulai bersih: laporan dan status sembunyi dari media
-    // lama TIDAK ikut diwarisi. Kalau tidak, satu QR bisa langsung
-    // tersembunyi oleh orang lain yang melaporkannya.
     report_count: 0,
     is_hidden: false,
     created_at: nowIso,
     updated_at: nowIso,
+    last_uploader_ip: uploaderIp,
+    unique_uploaders_since: newUniqueUploaders,
   };
 
   const { error: upsertError } = await supabase
