@@ -1,0 +1,20 @@
+{
+  "name": "qrhunt-moderation-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Layanan moderasi NSFWJS di sisi server untuk QrHunt. Dijalankan di VPS, dipanggil oleh aplikasi Next.js di Vercel.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "smoke": "node smoke-test.mjs"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs": "4.22.0"
+  },
+  "devDependencies": {
+    "nsfwjs": "^4.4.0"
+  }
+}
