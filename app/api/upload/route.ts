@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 import {
   destroyFromCloudinary,
@@ -60,7 +60,7 @@ function extractClientIp(request: Request): string | undefined {
  * membuat kegagalan di tengah tidak pernah meninggalkan QR dalam keadaan kosong
  * atau setengah tertulis.
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   // (1) Parse multipart.
   let form: FormData;
   try {
@@ -133,13 +133,18 @@ export async function POST(request: Request) {
 
   // (4.5) Rate limit per QR.
   //
-  // Setelah mengganti media, user ditendang dari QR itu. Baru bisa lagi
-  // setelah 3 orang lain sudah ganti, ATAU 5 jam berlalu. Ini mencegah
-  // satu orang mengunci QR dengan mengganti terus-menerus.
+  // Setelah mengganti media, perangkat pengguna ditendang dari QR itu. Baru bisa lagi
+  // setelah 3 perangkat lain sudah ganti, ATAU 5 jam berlalu.
   //
-  // Pengecekan di sini, SEBELUM moderasi dan upload, supaya request yang
-  // ditolak tidak membuang kuota moderasi dan Cloudinary.
+  // Pengecekan di sini berbasis Device Token & Cookie, bukan hanya IP publik,
+  // agar beberapa pengguna berbeda dalam 1 WiFi (mis. Cafe) TIDAK saling terblokir.
   const uploaderIp = extractClientIp(request) ?? "unknown";
+  const deviceId =
+    request.cookies.get("qrhunt_device_id")?.value ||
+    request.headers.get("x-device-id") ||
+    `dev_${crypto.randomUUID()}`;
+  const uploaderCookieTs = request.cookies.get(`qrhunt_last_upload_${qrCodeId}`)?.value;
+
   const RATE_LIMIT_HOURS = 5;
   const RATE_LIMIT_UNIQUE_UPLOADERS = 3;
 
@@ -147,14 +152,17 @@ export async function POST(request: Request) {
     const rateCheckDb = getSupabaseAdminClient();
     const { data: existing } = await rateCheckDb
       .from("qr_medias")
-      .select("last_uploader_ip, unique_uploaders_since, updated_at")
+      .select("last_uploader_device_id, unique_uploaders_since, updated_at")
       .eq("qr_code_id", qrCodeId)
       .maybeSingle();
 
-    if (existing?.last_uploader_ip === uploaderIp) {
-      const hoursSinceLastUpload =
-        (Date.now() - new Date(existing.updated_at).getTime()) / (1000 * 60 * 60);
-      const uniqueUploaders = existing.unique_uploaders_since ?? 0;
+    const isSameDevice = existing?.last_uploader_device_id === deviceId;
+    if ((isSameDevice && existing?.updated_at) || uploaderCookieTs) {
+      const uploadTimeMs = uploaderCookieTs
+        ? Number.parseInt(uploaderCookieTs, 10)
+        : new Date(existing?.updated_at ?? 0).getTime();
+      const hoursSinceLastUpload = (Date.now() - uploadTimeMs) / (1000 * 60 * 60);
+      const uniqueUploaders = existing?.unique_uploaders_since ?? 0;
 
       if (
         hoursSinceLastUpload < RATE_LIMIT_HOURS &&
@@ -163,15 +171,14 @@ export async function POST(request: Request) {
         const hoursLeft = Math.ceil(RATE_LIMIT_HOURS - hoursSinceLastUpload);
         return fail(
           429,
-          `Anda baru saja mengganti media ini. Tunggu ${hoursLeft} jam lagi, ` +
-            `atau sampai ${RATE_LIMIT_UNIQUE_UPLOADERS - uniqueUploaders} orang lain mengganti.`,
+          `Anda baru saja mengganti media ini di perangkat Anda. Tunggu ${hoursLeft} jam lagi, ` +
+            `atau sampai ${RATE_LIMIT_UNIQUE_UPLOADERS - uniqueUploaders} perangkat lain mengganti.`,
           "rate-limited",
         );
       }
     }
   } catch {
     // Kegagalan pengecekan rate limit TIDAK boleh memblokir upload.
-    // Lebih baik lolos sekali daripada menolak upload yang sah.
   }
 
   // (5) Moderasi server. Ini SUMBER KEBENARAN — semua langkah sebelumnya hanya UX.
@@ -295,18 +302,17 @@ export async function POST(request: Request) {
   // `qr_medias_payload_shape`.
   const nowIso = new Date().toISOString();
 
-  // Hitung unique_uploaders_since: kalau IP baru (beda dari terakhir), naikkan
-  // counter. Kalau IP sama, reset ke 0.
+  // Hitung unique_uploaders_since: kalau device_id baru (beda dari terakhir), naikkan counter.
   let newUniqueUploaders = 0;
   try {
     const prevCheck = getSupabaseAdminClient();
     const { data: prev } = await prevCheck
       .from("qr_medias")
-      .select("last_uploader_ip, unique_uploaders_since")
+      .select("last_uploader_device_id, unique_uploaders_since")
       .eq("qr_code_id", qrCodeId)
       .maybeSingle();
 
-    if (prev && prev.last_uploader_ip !== uploaderIp) {
+    if (prev && prev.last_uploader_device_id !== deviceId) {
       newUniqueUploaders = (prev.unique_uploaders_since ?? 0) + 1;
     }
   } catch {
@@ -324,6 +330,7 @@ export async function POST(request: Request) {
     is_hidden: false,
     created_at: nowIso,
     updated_at: nowIso,
+    last_uploader_device_id: deviceId,
     last_uploader_ip: uploaderIp,
     unique_uploaders_since: newUniqueUploaders,
   };
@@ -339,7 +346,13 @@ export async function POST(request: Request) {
     console.warn(
       "[api/upload] Kolom rate-limit belum ada di database (PGRST204). Upsert ulang tanpa rate-limit...",
     );
-    const { last_uploader_ip, unique_uploaders_since, ...baseRow } = row;
+    const {
+      last_uploader_device_id,
+      last_uploader_ip,
+      unique_uploaders_since,
+      ...baseRow
+    } = row;
+    void last_uploader_device_id;
     void last_uploader_ip;
     void unique_uploaders_since;
     const retry = await supabase
@@ -411,6 +424,16 @@ export async function POST(request: Request) {
     httpOnly: true,
     path: "/",
     maxAge: 5 * 3600,
+    sameSite: "lax",
+  });
+
+  // Perbarui device token unik di browser ini (berlaku 1 tahun)
+  res.cookies.set({
+    name: "qrhunt_device_id",
+    value: deviceId,
+    httpOnly: true,
+    path: "/",
+    maxAge: 365 * 24 * 3600,
     sameSite: "lax",
   });
 

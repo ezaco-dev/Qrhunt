@@ -35,10 +35,11 @@ create table if not exists public.qr_medias (
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
 
-  -- Rate limit: IP pengunggah terakhir dan hitungan pengganti unik sejak
-  -- pengunggah itu. Dipakai oleh upload route untuk menolak pengunggah yang
-  -- sama kecuali sudah ada 3 orang lain yang mengganti, atau 5 jam berlalu.
-  last_uploader_ip    text,
+  -- Rate limit: Token perangkat pengunggah terakhir dan hitungan pengganti unik.
+  -- Menggunakan device token + cookie browser agar perangkat berbeda dalam 1 WiFi
+  -- (mis. Cafe) tidak saling terblokir.
+  last_uploader_device_id text,
+  last_uploader_ip        text,
   unique_uploaders_since integer not null default 0,
 
   -- Invariant bentuk payload.

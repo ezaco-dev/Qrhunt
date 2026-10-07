@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { HomeIcon } from "lucide-react";
 
@@ -10,16 +10,6 @@ import { ReportButton } from "@/components/ReportButton";
 import { SetupNotice } from "@/components/SetupNotice";
 import { checkQrAccess, getMediaBySubId } from "@/lib/media";
 import { isSupabaseAdminConfigured } from "@/lib/supabase";
-
-async function getClientIp(): Promise<string> {
-  const h = await headers();
-  const forwarded = h.get("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
-  }
-  return h.get("x-real-ip") ?? "127.0.0.1";
-}
 
 const TIMESTAMP_FORMAT = new Intl.DateTimeFormat("id-ID", {
   dateStyle: "medium",
@@ -54,13 +44,13 @@ export default async function MediaSubIdPage(props: {
     notFound();
   }
 
-  // (2) Cek apakah pengguna ditendang dari QR code ini (rate limit)
+  // (2) Cek apakah pengguna ditendang dari QR code ini (rate limit per device)
   const cookieStore = await cookies();
+  const deviceId = cookieStore.get("qrhunt_device_id")?.value;
   const lastUploadCookie = cookieStore.get(`qrhunt_last_upload_${media.qr_code_id}`)?.value;
   const cookieTs = lastUploadCookie ? Number.parseInt(lastUploadCookie, 10) : null;
 
-  const clientIp = await getClientIp();
-  const accessBlock = await checkQrAccess(media.qr_code_id, clientIp, cookieTs);
+  const accessBlock = await checkQrAccess(media.qr_code_id, deviceId, cookieTs);
 
   if (accessBlock.isBlocked) {
     return (

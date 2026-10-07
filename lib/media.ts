@@ -37,14 +37,17 @@ export interface QrAccessBlockInfo {
 }
 
 /**
- * Cek apakah pengguna (berdasarkan IP) ditendang dari QR ini.
+ * Cek apakah perangkat pengguna ditendang dari QR ini.
  *
- * Pengguna yang baru saja memperbarui QR ditendang dan tidak bisa mengakses
- * halaman QR ini sampai 3 pengguna lain memperbaruinya ATAU 5 jam berlalu.
+ * Pengguna yang baru saja memperbarui QR ditendang di perangkat tersebut dan tidak
+ * bisa mengakses halaman QR ini sampai 3 perangkat lain memperbaruinya ATAU 5 jam berlalu.
+ *
+ * Menggunakan Device Token / Cookie agar beberapa perangkat dalam 1 jaringan WiFi (mis. Cafe)
+ * tidak saling memblokir satu sama lain.
  */
 export async function checkQrAccess(
   qrCodeId: string,
-  clientIp: string,
+  clientDeviceId?: string | null,
   cookieTimestamp?: number | null,
 ): Promise<QrAccessBlockInfo> {
   const DEFAULT_ALLOWED: QrAccessBlockInfo = {
@@ -61,22 +64,27 @@ export async function checkQrAccess(
     const supabase = getSupabaseAdminClient();
     const { data } = await supabase
       .from("qr_medias")
-      .select("last_uploader_ip, unique_uploaders_since, updated_at")
+      .select("last_uploader_device_id, last_uploader_ip, unique_uploaders_since, updated_at")
       .eq("qr_code_id", qrCodeId)
       .maybeSingle();
 
     const row = (data ?? {}) as {
+      last_uploader_device_id?: string | null;
       last_uploader_ip?: string | null;
       unique_uploaders_since?: number | null;
       updated_at?: string;
     };
 
     const uniqueUploaders = row.unique_uploaders_since ?? 0;
-    const isLastIp = Boolean(clientIp && clientIp !== "unknown" && row.last_uploader_ip === clientIp);
+    const isSameDevice = Boolean(
+      clientDeviceId &&
+        row.last_uploader_device_id &&
+        row.last_uploader_device_id === clientDeviceId,
+    );
 
-    // Waktu unggah ditentukan dari DB jika ada, atau dari cookie pengunggah
+    // Waktu unggah ditentukan dari DB jika perangkat ini pengunggah terakhir, atau dari cookie pengunggah lokal
     let uploadTimeMs: number | null = null;
-    if (isLastIp && row.updated_at) {
+    if (isSameDevice && row.updated_at) {
       uploadTimeMs = new Date(row.updated_at).getTime();
     } else if (cookieTimestamp && Number.isFinite(cookieTimestamp)) {
       uploadTimeMs = cookieTimestamp;
