@@ -1,13 +1,25 @@
 import Link from "next/link";
+import { headers, cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { HomeIcon } from "lucide-react";
 
 import { MediaTypeBadge, MediaViewer } from "@/components/MediaViewer";
 import { QrActions } from "@/components/QrActions";
+import { QrKickedNotice } from "@/components/QrKickedNotice";
 import { ReportButton } from "@/components/ReportButton";
 import { SetupNotice } from "@/components/SetupNotice";
-import { getActiveMedia } from "@/lib/media";
+import { checkQrAccess, getActiveMedia } from "@/lib/media";
 import { isSupabaseAdminConfigured } from "@/lib/supabase";
+
+async function getClientIp(): Promise<string> {
+  const h = await headers();
+  const forwarded = h.get("x-forwarded-for");
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  return h.get("x-real-ip") ?? "127.0.0.1";
+}
 
 /**
  * Format tanggal dalam bahasa Indonesia, zona waktu Jakarta.
@@ -55,6 +67,27 @@ export default async function QrPage(props: PageProps<"/q/[qr_id]">) {
     return (
       <main className="mx-auto w-full max-w-3xl px-4 py-10">
         <SetupNotice />
+      </main>
+    );
+  }
+
+  // (1.5) Cek apakah pengunggah terakhir ditendang (rate limit per QR).
+  const cookieStore = await cookies();
+  const lastUploadCookie = cookieStore.get(`qrhunt_last_upload_${qrCodeId}`)?.value;
+  const cookieTs = lastUploadCookie ? Number.parseInt(lastUploadCookie, 10) : null;
+
+  const clientIp = await getClientIp();
+  const accessBlock = await checkQrAccess(qrCodeId, clientIp, cookieTs);
+
+  if (accessBlock.isBlocked) {
+    return (
+      <main className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-16">
+        <QrKickedNotice
+          qrCodeId={qrCodeId}
+          hoursLeft={accessBlock.hoursLeft}
+          minutesLeft={accessBlock.minutesLeft}
+          uniqueUploadersLeft={accessBlock.uniqueUploadersLeft}
+        />
       </main>
     );
   }

@@ -29,6 +29,87 @@ function toPublicQrMedia(row: QrMediaRow): PublicQrMedia {
   };
 }
 
+export interface QrAccessBlockInfo {
+  isBlocked: boolean;
+  hoursLeft: number;
+  minutesLeft: number;
+  uniqueUploadersLeft: number;
+}
+
+/**
+ * Cek apakah pengguna (berdasarkan IP) ditendang dari QR ini.
+ *
+ * Pengguna yang baru saja memperbarui QR ditendang dan tidak bisa mengakses
+ * halaman QR ini sampai 3 pengguna lain memperbaruinya ATAU 5 jam berlalu.
+ */
+export async function checkQrAccess(
+  qrCodeId: string,
+  clientIp: string,
+  cookieTimestamp?: number | null,
+): Promise<QrAccessBlockInfo> {
+  const DEFAULT_ALLOWED: QrAccessBlockInfo = {
+    isBlocked: false,
+    hoursLeft: 0,
+    minutesLeft: 0,
+    uniqueUploadersLeft: 0,
+  };
+
+  const RATE_LIMIT_HOURS = 5;
+  const RATE_LIMIT_UNIQUE_UPLOADERS = 3;
+
+  try {
+    const supabase = getSupabaseAdminClient();
+    const { data } = await supabase
+      .from("qr_medias")
+      .select("last_uploader_ip, unique_uploaders_since, updated_at")
+      .eq("qr_code_id", qrCodeId)
+      .maybeSingle();
+
+    const row = (data ?? {}) as {
+      last_uploader_ip?: string | null;
+      unique_uploaders_since?: number | null;
+      updated_at?: string;
+    };
+
+    const uniqueUploaders = row.unique_uploaders_since ?? 0;
+    const isLastIp = Boolean(clientIp && clientIp !== "unknown" && row.last_uploader_ip === clientIp);
+
+    // Waktu unggah ditentukan dari DB jika ada, atau dari cookie pengunggah
+    let uploadTimeMs: number | null = null;
+    if (isLastIp && row.updated_at) {
+      uploadTimeMs = new Date(row.updated_at).getTime();
+    } else if (cookieTimestamp && Number.isFinite(cookieTimestamp)) {
+      uploadTimeMs = cookieTimestamp;
+    }
+
+    if (uploadTimeMs && uniqueUploaders < RATE_LIMIT_UNIQUE_UPLOADERS) {
+      const diffMs = Date.now() - uploadTimeMs;
+      const hoursSinceLastUpload = diffMs / (1000 * 60 * 60);
+
+      if (hoursSinceLastUpload < RATE_LIMIT_HOURS) {
+        const totalMinutesLeft = Math.max(
+          1,
+          Math.ceil((RATE_LIMIT_HOURS * 60 * 60 * 1000 - diffMs) / (1000 * 60)),
+        );
+        const hoursLeft = Math.floor(totalMinutesLeft / 60);
+        const minutesLeft = totalMinutesLeft % 60;
+        const uniqueUploadersLeft = RATE_LIMIT_UNIQUE_UPLOADERS - uniqueUploaders;
+
+        return {
+          isBlocked: true,
+          hoursLeft,
+          minutesLeft,
+          uniqueUploadersLeft,
+        };
+      }
+    }
+
+    return DEFAULT_ALLOWED;
+  } catch {
+    return DEFAULT_ALLOWED;
+  }
+}
+
 /**
  * Baca media aktif untuk satu QR.
  *

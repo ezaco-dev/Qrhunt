@@ -388,7 +388,7 @@ export async function POST(request: Request) {
   }
 
   // (10) Sukses.
-  return NextResponse.json<ApiResult<UploadSuccessData>>({
+  const res = NextResponse.json<ApiResult<UploadSuccessData>>({
     ok: true,
     data: {
       qrCodeId,
@@ -397,4 +397,17 @@ export async function POST(request: Request) {
       textContent: mediaType === "text" ? textContent : null,
     },
   });
+
+  // Set cookie pengunggah agar browser pengunggah langsung terkunci / ditendang
+  // dari QR ini selama 5 jam.
+  res.cookies.set({
+    name: `qrhunt_last_upload_${qrCodeId}`,
+    value: String(Date.now()),
+    httpOnly: true,
+    path: "/",
+    maxAge: 5 * 3600,
+    sameSite: "lax",
+  });
+
+  return res;
 }
