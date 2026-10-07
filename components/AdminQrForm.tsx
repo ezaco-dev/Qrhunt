@@ -7,11 +7,17 @@ import {
   CheckIcon,
   CopyIcon,
   DownloadIcon,
+  ExternalLinkIcon,
+  EyeIcon,
+  EyeOffIcon,
+  FolderPlusIcon,
   Loader2Icon,
+  MapPinIcon,
   PrinterIcon,
   QrCodeIcon,
   RefreshCwIcon,
   SparklesIcon,
+  Trash2Icon,
   VideoIcon,
 } from "lucide-react";
 
@@ -405,19 +411,33 @@ export function AdminQrForm() {
         {scannerOpen && <video ref={videoRef} className="mt-3 aspect-video w-full max-w-sm rounded-lg border bg-black" muted playsInline />}
         {scanMessage && <p className="mt-2 text-sm text-muted-foreground">{scanMessage}</p>}
 
-        {/* Action bar paling atas list: selalu terlihat, dipakai untuk aksi massal
-            atas QR yang sudah dipilih lewat checkbox per baris. */}
-        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3">
-          <span className="text-sm font-medium">
-            {selectedQrIds.size > 0 ? `${selectedQrIds.size} QR dipilih` : "Pilih QR untuk aksi massal"}
-          </span>
-          <Button variant="outline" size="sm" disabled={selectedQrIds.size === 0} onClick={bulkSetGroup}>
-            Masukkan ke Grup
-          </Button>
-          <Button variant="outline" size="sm" disabled={selectedQrIds.size === 0} onClick={bulkDelete}>
-            Hapus Terpilih
-          </Button>
-        </div>
+        {/* Bar aksi massal: baru muncul setelah minimal 2 QR dipilih, dan hanya
+            ikon berwarna — teks berat di sini menutupi nama QR di bawahnya. */}
+        {selectedQrIds.size >= 2 && (
+          <div className="mt-4 flex items-center justify-end gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              {selectedQrIds.size} QR dipilih
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={bulkSetGroup}
+              aria-label="Masukkan ke grup"
+              title="Masukkan ke grup"
+            >
+              <FolderPlusIcon className="text-blue-600 dark:text-blue-400" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={bulkDelete}
+              aria-label="Hapus terpilih"
+              title="Hapus terpilih"
+            >
+              <Trash2Icon className="text-red-600 dark:text-red-400" />
+            </Button>
+          </div>
+        )}
 
         <div className="mt-4 flex flex-col gap-4">
           {Object.entries(groups).map(([group, items]) => (
@@ -464,39 +484,57 @@ export function AdminQrForm() {
                         </p>
                       </button>
 
-                      {/* Action muncul di kanan nama, hanya untuk baris aktif. */}
+                      {/* Action muncul di kanan nama, hanya untuk baris aktif.
+                          Ikon berwarna, bukan teks: baris sempit di mobile supaya
+                          nama QR tidak tertutup/terdorong. */}
                       {isActive && (
-                        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                        <div className="flex shrink-0 items-center gap-1">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => patchQr(row.qr_code_id, { is_disabled: !row.is_disabled })}
+                            aria-label={row.is_disabled ? "Aktifkan QR" : "Nonaktifkan QR"}
+                            title={row.is_disabled ? "Aktifkan QR" : "Nonaktifkan QR"}
                           >
-                            {row.is_disabled ? "Aktifkan" : "Nonaktifkan"}
+                            {row.is_disabled ? (
+                              <EyeOffIcon className="text-amber-500" />
+                            ) : (
+                              <EyeIcon className="text-emerald-600 dark:text-emerald-400" />
+                            )}
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
+                            aria-label="Edit lokasi"
+                            title="Edit lokasi"
                             onClick={() =>
                               patchQr(row.qr_code_id, {
                                 admin_label: window.prompt("Lokasi QR", row.admin_label ?? "") || row.admin_label,
                               })
                             }
                           >
-                            Lokasi
-                          </Button>
-                          <Button variant="outline" size="sm" render={<Link href={`/q/${row.qr_code_id}`} />}>
-                            Buka
+                            <MapPinIcon className="text-blue-600 dark:text-blue-400" />
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
+                            aria-label="Buka halaman publik"
+                            title="Buka halaman publik"
+                            render={<Link href={`/q/${row.qr_code_id}`} />}
+                          >
+                            <ExternalLinkIcon className="text-slate-500" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label="Hapus QR"
+                            title="Hapus QR"
                             onClick={async () => {
                               await deleteQr(row.qr_code_id);
                               setActiveRowId(null);
                             }}
                           >
-                            Hapus
+                            <Trash2Icon className="text-red-600 dark:text-red-400" />
                           </Button>
                         </div>
                       )}
