@@ -18,11 +18,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+interface GeneratedQrItem { qrCodeId: string; publicUrl: string; dataUrl: string }
+
 type Status =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "done"; qrCodeId: string; publicUrl: string; dataUrl: string };
+  | { kind: "done"; items: GeneratedQrItem[]; activeIndex: number };
 
 interface AdminQrRow {
   id: string;
@@ -40,6 +42,60 @@ interface BarcodeDetectorLike {
   detect(video: HTMLVideoElement): Promise<Array<{ rawValue: string }>>;
 }
 
+function shortText(value: string, start = 18, end = 8): string {
+  return value.length <= start + end + 3 ? value : `${value.slice(0, start)}...${value.slice(-end)}`;
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = -1;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+function pushU16(out: number[], value: number) {
+  out.push(value & 255, (value >>> 8) & 255);
+}
+
+function pushU32(out: number[], value: number) {
+  out.push(value & 255, (value >>> 8) & 255, (value >>> 16) & 255, (value >>> 24) & 255);
+}
+
+function createZip(files: Array<{ name: string; bytes: Uint8Array }>): Blob {
+  const out: number[] = [];
+  const central: number[] = [];
+  const encoder = new TextEncoder();
+
+  for (const file of files) {
+    const name = encoder.encode(file.name);
+    const offset = out.length;
+    const crc = crc32(file.bytes);
+
+    pushU32(out, 0x04034b50); pushU16(out, 20); pushU16(out, 0); pushU16(out, 0);
+    pushU16(out, 0); pushU16(out, 0); pushU32(out, crc); pushU32(out, file.bytes.length);
+    pushU32(out, file.bytes.length); pushU16(out, name.length); pushU16(out, 0);
+    out.push(...name, ...file.bytes);
+
+    pushU32(central, 0x02014b50); pushU16(central, 20); pushU16(central, 20); pushU16(central, 0); pushU16(central, 0);
+    pushU16(central, 0); pushU16(central, 0); pushU32(central, crc); pushU32(central, file.bytes.length);
+    pushU32(central, file.bytes.length); pushU16(central, name.length); pushU16(central, 0); pushU16(central, 0);
+    pushU16(central, 0); pushU16(central, 0); pushU32(central, 0); pushU32(central, offset); central.push(...name);
+  }
+
+  const centralOffset = out.length;
+  out.push(...central);
+  pushU32(out, 0x06054b50); pushU16(out, 0); pushU16(out, 0); pushU16(out, files.length); pushU16(out, files.length);
+  pushU32(out, central.length); pushU32(out, centralOffset); pushU16(out, 0);
+  return new Blob([Uint8Array.from(out)], { type: "application/zip" });
+}
+
 export function AdminQrForm() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [copied, setCopied] = useState(false);
@@ -50,6 +106,8 @@ export function AdminQrForm() {
   const [manualScan, setManualScan] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [selectedQrIds, setSelectedQrIds] = useState<Set<string>>(new Set());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(["Tanpa Grup"]));
   const printRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -91,15 +149,20 @@ export function AdminQrForm() {
         return;
       }
 
-      const qrCodeId = payload.qr_code_id;
-      const publicUrl = `${window.location.origin}/q/${encodeURIComponent(qrCodeId)}`;
-      const dataUrl = await QRCode.toDataURL(publicUrl, {
-        errorCorrectionLevel: "M",
-        margin: 2,
-        width: 512,
-        color: { dark: "#000000", light: "#ffffff" },
-      });
-      setStatus({ kind: "done", qrCodeId, publicUrl, dataUrl });
+      const items = await Promise.all(
+        (payload.items?.length ? payload.items : [{ qr_code_id: payload.qr_code_id }]).map(async (item) => {
+          const qrCodeId = item.qr_code_id;
+          const publicUrl = `${window.location.origin}/q/${encodeURIComponent(qrCodeId)}`;
+          const dataUrl = await QRCode.toDataURL(publicUrl, {
+            errorCorrectionLevel: "M",
+            margin: 2,
+            width: 512,
+            color: { dark: "#000000", light: "#ffffff" },
+          });
+          return { qrCodeId, publicUrl, dataUrl };
+        }),
+      );
+      setStatus({ kind: "done", items, activeIndex: 0 });
       await loadRows();
     } catch {
       setStatus({ kind: "error", message: "Tidak bisa menghubungi server. Coba lagi." });
@@ -129,6 +192,42 @@ export function AdminQrForm() {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
     window.alert(payload?.error ?? "Gagal menghapus QR.");
   }, [loadRows]);
+
+  const toggleSelected = useCallback((qrCodeId: string) => {
+    setSelectedQrIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(qrCodeId)) next.delete(qrCodeId);
+      else next.add(qrCodeId);
+      return next;
+    });
+  }, []);
+
+  const bulkDelete = useCallback(async () => {
+    if (selectedQrIds.size === 0) return;
+    const ok = window.confirm(`Hapus ${selectedQrIds.size} QR terpilih?`);
+    if (!ok) return;
+    await Promise.all([...selectedQrIds].map((id) => fetch(`/api/admin/qr/${encodeURIComponent(id)}`, { method: "DELETE" })));
+    setSelectedQrIds(new Set());
+    await loadRows();
+  }, [loadRows, selectedQrIds]);
+
+  const bulkSetGroup = useCallback(async () => {
+    if (selectedQrIds.size === 0) return;
+    const group = window.prompt("Nama grup baru untuk QR terpilih", groupName || "Grup Baru");
+    if (!group) return;
+    await Promise.all(
+      [...selectedQrIds].map((id) =>
+        fetch(`/api/admin/qr/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ admin_group_name: group }),
+        }),
+      ),
+    );
+    setOpenGroups((prev) => new Set(prev).add(group));
+    setSelectedQrIds(new Set());
+    await loadRows();
+  }, [groupName, loadRows, selectedQrIds]);
 
   const markScannedQr = useCallback(async (raw: string) => {
     const qrCodeId = raw.trim().split("/q/").pop()?.split(/[?#]/)[0] ?? raw.trim();
@@ -171,17 +270,33 @@ export function AdminQrForm() {
 
   const handleCopy = useCallback(async () => {
     if (status.kind !== "done") return;
-    await navigator.clipboard.writeText(status.publicUrl);
+    await navigator.clipboard.writeText(status.items[status.activeIndex]?.publicUrl ?? "");
     setCopied(true);
   }, [status]);
 
   const handleDownload = useCallback(() => {
     if (status.kind !== "done") return;
+    const active = status.items[status.activeIndex];
+    if (!active) return;
     const link = document.createElement("a");
-    link.href = status.dataUrl;
-    link.download = `qr-${status.qrCodeId}.png`;
+    link.href = active.dataUrl;
+    link.download = `qr-${active.qrCodeId}.png`;
     link.click();
   }, [status]);
+
+  const handleDownloadZip = useCallback(() => {
+    if (status.kind !== "done") return;
+    const files = status.items.map((item) => ({
+      name: `qr-${item.qrCodeId}.png`,
+      bytes: dataUrlToBytes(item.dataUrl),
+    }));
+    const blob = createZip(files);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `qr-${groupName.trim() || "batch"}.zip`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }, [groupName, status]);
 
   const handlePrint = useCallback(() => {
     if (status.kind !== "done") return;
@@ -217,17 +332,33 @@ export function AdminQrForm() {
 
       {status.kind === "done" && (
         <section aria-label="QR code siap" className="flex flex-col gap-4 rounded-xl border p-4 bg-background">
+          {(() => {
+            const active = status.items[status.activeIndex];
+            if (!active) return null;
+            return (
+              <>
           <div ref={printRef} className="print:qr-card flex flex-col items-center gap-3 text-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={status.dataUrl} alt={`QR code ${status.qrCodeId}`} className="size-48 rounded-lg border bg-white p-2" />
-            <p className="font-mono text-sm font-medium">{status.publicUrl}</p>
+            <img src={active.dataUrl} alt={`QR code ${active.qrCodeId}`} className="size-48 rounded-lg border bg-white p-2" />
+            <p className="max-w-full truncate font-mono text-sm font-medium" title={active.publicUrl}>{shortText(active.publicUrl)}</p>
           </div>
+          {status.items.length > 1 && (
+            <div className="flex items-center justify-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setStatus({ ...status, activeIndex: Math.max(0, status.activeIndex - 1) })}>Prev</Button>
+              <span className="text-xs text-muted-foreground">{status.activeIndex + 1}/{status.items.length}</span>
+              <Button variant="outline" size="sm" onClick={() => setStatus({ ...status, activeIndex: Math.min(status.items.length - 1, status.activeIndex + 1) })}>Next</Button>
+            </div>
+          )}
           <div className="flex flex-wrap justify-center gap-2">
             <Button variant="outline" onClick={handleCopy}>{copied ? <CheckIcon /> : <CopyIcon />}{copied ? "Tersalin" : "Salin URL"}</Button>
             <Button variant="outline" onClick={handleDownload}><DownloadIcon />Unduh PNG</Button>
+            <Button variant="outline" onClick={handleDownloadZip}><DownloadIcon />Unduh ZIP</Button>
             <Button variant="outline" onClick={handlePrint}><PrinterIcon />Cetak</Button>
-            <Button render={<Link href={`/q/${status.qrCodeId}`} />}>Buka Halaman Publik</Button>
+            <Button render={<Link href={`/q/${active.qrCodeId}`} />}>Buka Halaman Publik</Button>
           </div>
+              </>
+            );
+          })()}
         </section>
       )}
 
@@ -246,16 +377,44 @@ export function AdminQrForm() {
         {scannerOpen && <video ref={videoRef} className="mt-3 aspect-video w-full max-w-sm rounded-lg border bg-black" muted playsInline />}
         {scanMessage && <p className="mt-2 text-sm text-muted-foreground">{scanMessage}</p>}
 
+        {selectedQrIds.size > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3">
+            <span className="text-sm font-medium">{selectedQrIds.size} QR dipilih</span>
+            <Button variant="outline" size="sm" onClick={bulkSetGroup}>Masukkan ke Grup</Button>
+            <Button variant="outline" size="sm" onClick={bulkDelete}>Hapus Terpilih</Button>
+          </div>
+        )}
+
         <div className="mt-4 flex flex-col gap-4">
           {Object.entries(groups).map(([group, items]) => (
             <div key={group} className="rounded-lg border p-3">
-              <h3 className="text-sm font-semibold">{group} <span className="text-muted-foreground">({items.length})</span></h3>
-              <div className="mt-2 divide-y">
+              <button
+                type="button"
+                onClick={() => setOpenGroups((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(group)) next.delete(group);
+                  else next.add(group);
+                  return next;
+                })}
+                className="flex w-full items-center justify-between text-left text-sm font-semibold"
+              >
+                <span className="truncate">{shortText(group, 24, 8)} <span className="text-muted-foreground">({items.length})</span></span>
+                <span>{openGroups.has(group) ? "−" : "+"}</span>
+              </button>
+              {openGroups.has(group) && <div className="mt-2 divide-y">
                 {items.map((row) => (
                   <div key={row.qr_code_id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-sm">{row.qr_code_id}</p>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedQrIds.has(row.qr_code_id)}
+                        onChange={() => toggleSelected(row.qr_code_id)}
+                        className="mt-1"
+                      />
+                      <div className="min-w-0">
+                      <p className="truncate font-mono text-sm" title={row.qr_code_id}>{shortText(row.qr_code_id, 20, 6)}</p>
                       <p className="text-xs text-muted-foreground">{row.admin_label || "Belum ditandai lokasi"}</p>
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant={row.is_disabled ? "default" : "outline"} size="sm" onClick={() => patchQr(row.qr_code_id, { is_disabled: !row.is_disabled })}>
@@ -267,7 +426,7 @@ export function AdminQrForm() {
                     </div>
                   </div>
                 ))}
-              </div>
+              </div>}
             </div>
           ))}
         </div>
