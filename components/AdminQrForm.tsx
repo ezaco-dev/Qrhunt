@@ -115,6 +115,21 @@ export function AdminQrForm() {
     if (response.ok) await loadRows();
   }, [loadRows]);
 
+  const deleteQr = useCallback(async (qrCodeId: string) => {
+    const ok = window.confirm(`Hapus QR ${qrCodeId} dari database? Tindakan ini tidak bisa dibatalkan.`);
+    if (!ok) return;
+
+    const response = await fetch(`/api/admin/qr/${encodeURIComponent(qrCodeId)}`, {
+      method: "DELETE",
+    });
+    if (response.ok) {
+      await loadRows();
+      return;
+    }
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    window.alert(payload?.error ?? "Gagal menghapus QR.");
+  }, [loadRows]);
+
   const markScannedQr = useCallback(async (raw: string) => {
     const qrCodeId = raw.trim().split("/q/").pop()?.split(/[?#]/)[0] ?? raw.trim();
     const label = window.prompt("Tandai QR ini ada di mana?", "Meja / Lokasi");
@@ -248,6 +263,7 @@ export function AdminQrForm() {
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => patchQr(row.qr_code_id, { admin_label: window.prompt("Lokasi QR", row.admin_label ?? "") || row.admin_label })}>Edit Lokasi</Button>
                       <Button variant="outline" size="sm" render={<Link href={`/q/${row.qr_code_id}`} />}>Buka</Button>
+                      <Button variant="outline" size="sm" onClick={() => deleteQr(row.qr_code_id)}>Hapus</Button>
                     </div>
                   </div>
                 ))}

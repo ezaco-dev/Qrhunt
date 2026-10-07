@@ -63,3 +63,32 @@ export async function PATCH(
 
   return NextResponse.json({ ok: true });
 }
+
+export async function DELETE(
+  _request: Request,
+  props: { params: Promise<{ qr_id: string }> },
+): Promise<NextResponse> {
+  if (!(await isAdminAuthenticated())) {
+    return NextResponse.json({ ok: false, error: "Tidak punya akses." }, { status: 401 });
+  }
+
+  const { qr_id: rawQrId } = await props.params;
+  const qrCodeId = decodeURIComponent(rawQrId);
+  const parsedQr = qrCodeIdSchema.safeParse(qrCodeId);
+  if (!parsedQr.success) {
+    return NextResponse.json({ ok: false, error: "ID QR tidak valid." }, { status: 400 });
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("qr_medias")
+    .delete()
+    .eq("qr_code_id", parsedQr.data);
+
+  if (error) {
+    console.error("[api/admin/qr/[qr_id]] gagal delete:", error.message);
+    return NextResponse.json({ ok: false, error: `Gagal menghapus QR: ${error.message}` }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
+}

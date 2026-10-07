@@ -144,9 +144,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    console.error("[api/admin/qr] gagal insert:", error.message);
+    console.error("[api/admin/qr] gagal insert:", error);
     return NextResponse.json(
-      { ok: false, error: "Gagal membuat QR di database." },
+      { ok: false, error: `Gagal membuat QR di database: ${error.message}` },
       { status: 500 },
     );
   }
