@@ -154,3 +154,46 @@ export async function getActiveMedia(qrCodeId: string): Promise<PublicQrMedia | 
     return null;
   }
 }
+
+/**
+ * Baca media berdasarkan sub ID (kolom `id`).
+ *
+ * Memastikan baris tersebut aktif (is_hidden = false) DAN merupakan media
+ * aktif paling baru untuk `qr_code_id`-nya.
+ */
+export async function getMediaBySubId(mediaId: string): Promise<PublicQrMedia | null> {
+  try {
+    const supabase = getSupabaseAdminClient();
+
+    const { data, error } = await supabase
+      .from("qr_medias")
+      .select(PUBLIC_COLUMNS)
+      .eq("id", mediaId)
+      .eq("is_hidden", false)
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      if (error) {
+        console.error("[lib/media] gagal membaca media sub ID:", error.message);
+      }
+      return null;
+    }
+
+    const media = toPublicQrMedia(data as QrMediaRow);
+
+    // Verifikasi bahwa media ini adalah media aktif terkini untuk QR code-nya
+    const activeCurrent = await getActiveMedia(media.qr_code_id);
+    if (!activeCurrent || activeCurrent.id !== media.id) {
+      return null;
+    }
+
+    return media;
+  } catch (err) {
+    console.error(
+      "[lib/media] exception saat membaca media sub ID:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}

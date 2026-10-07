@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 
 import {
@@ -19,6 +20,7 @@ export const maxDuration = 60;
 
 interface UploadSuccessData {
   qrCodeId: string;
+  mediaId: string;
   mediaType: MediaType;
   mediaUrl: string | null;
   textContent: string | null;
@@ -311,7 +313,9 @@ export async function POST(request: Request) {
     // Kegagalan tidak boleh memblokir upload.
   }
 
+  const newMediaId = crypto.randomUUID();
   const row = {
+    id: newMediaId,
     qr_code_id: qrCodeId,
     media_type: mediaType,
     media_url: newMediaUrl,
@@ -392,6 +396,7 @@ export async function POST(request: Request) {
     ok: true,
     data: {
       qrCodeId,
+      mediaId: newMediaId,
       mediaType,
       mediaUrl: newMediaUrl,
       textContent: mediaType === "text" ? textContent : null,

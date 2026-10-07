@@ -35,11 +35,17 @@ export function QrActions({ qrCodeId, hasExistingMedia }: QrActionsProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
-  const handleUploaded = useCallback(() => {
-    setOpen(false);
-    // Server Component perlu membaca ulang media baru dari database.
-    router.refresh();
-  }, [router]);
+  const handleUploaded = useCallback(
+    (newMediaId?: string) => {
+      setOpen(false);
+      if (newMediaId) {
+        router.push(`/m/${newMediaId}`);
+      } else {
+        router.refresh();
+      }
+    },
+    [router],
+  );
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

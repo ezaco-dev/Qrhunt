@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -7,28 +8,8 @@ import { qrCodeIdSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-/**
- * POST /api/admin/qr
- *
- * Membuat baris baru di `qr_medias` untuk ID QR yang belum dipakai.
- *
- * Kenapa baris perlu dibuat di sini, bukan menunggu unggahan pertama:
- * admin membuat QR untuk ditempel SEBELUM ada media. Tanpa baris, halaman
- * publik `/q/<id>` membalas 404 padahal QR-nya sah, dan admin tidak punya cara
- * memeriksa bahwa QR yang dicetak itu benar-benar akan bekerja.
- *
- * Keamanan:
- *   - Hanya sesi admin yang boleh membuat baris. Tidak ada jalur tulis lain
- *     yang membaca request ini.
- *   - `qr_code_id` divalidasi dengan `qrCodeIdSchema`, skema yang sama dengan
- *     halaman publik dan `/api/upload`, supaya tidak ada ID yang lolos di satu
- *     tempat tapi ditolak di tempat lain.
- *
- * Media awalnya berupa teks sambutan, jadi QR yang baru dicetak tidak menampilkan
- * halaman kosong dan pemilik tempat bisa langsung menggantinya.
- */
 const bodySchema = z.object({
-  qr_code_id: qrCodeIdSchema,
+  qr_code_id: qrCodeIdSchema.optional(),
   label: z.string().trim().max(120).optional(),
 });
 
@@ -44,9 +25,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  let payload: unknown;
+  let payload: unknown = {};
   try {
-    payload = await request.json();
+    const text = await request.text();
+    if (text.trim()) {
+      payload = JSON.parse(text);
+    }
   } catch {
     return NextResponse.json(
       { ok: false, error: "Body bukan JSON yang valid." },
@@ -60,7 +44,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: message }, { status: 400 });
   }
 
-  const { qr_code_id: qrCodeId, label } = parsed.data;
+  // Generate QR ID super unik jika tidak dikirim dari client
+  const qrCodeId =
+    parsed.data.qr_code_id ||
+    `qr_${crypto.randomBytes(6).toString("hex")}`;
+  const mediaId = crypto.randomUUID();
 
   let supabase;
   try {
@@ -72,26 +60,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // `label` hanya catatan admin dan tabel tidak punya kolom itu, jadi untuk
-  // sekarang tidak disimpan. Kalau nanti dibutuhkan, tambahkan kolomnya di
-  // schema.sql dan jalankan migrasi — jangan selipkan ke kolom lain.
-  void label;
-
-  const { error } = await supabase.from("qr_medias").insert({
-    qr_code_id: qrCodeId,
-    media_type: "text",
-    text_content: DEFAULT_TEXT,
-  });
+  const { data, error } = await supabase
+    .from("qr_medias")
+    .insert({
+      id: mediaId,
+      qr_code_id: qrCodeId,
+      media_type: "text",
+      text_content: DEFAULT_TEXT,
+    })
+    .select("id, qr_code_id")
+    .single();
 
   if (error) {
-    // 23505 = unique_violation. Pesan khusus supaya admin tahu ID-nya sudah
-    // dipakai, bukan mengira ini error sistem.
     if (error.code === "23505") {
       return NextResponse.json(
         {
           ok: false,
           error:
-            "ID QR ini sudah dipakai. Pilih ID lain atau buka halaman publiknya.",
+            "ID QR ini sudah dipakai. Silakan coba klik generate lagi.",
         },
         { status: 409 },
       );
@@ -104,5 +90,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  return NextResponse.json({ ok: true, qr_code_id: qrCodeId });
+  return NextResponse.json({
+    ok: true,
+    qr_code_id: data.qr_code_id,
+    media_id: data.id,
+  });
 }

@@ -68,7 +68,7 @@ function acceptFor(mediaType: MediaType): string | undefined {
 export interface MediaUploaderProps {
   qrCodeId: string;
   hasExistingMedia: boolean;
-  onUploaded: () => void;
+  onUploaded: (mediaId?: string) => void;
 }
 
 /**
@@ -97,6 +97,7 @@ export function MediaUploader({
   const [, setNsfwScanResult] = useState<NsfwScanResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadedMediaId, setUploadedMediaId] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileFailed, setTurnstileFailed] = useState(false);
   const [adPending, setAdPending] = useState(false);
@@ -207,6 +208,7 @@ export function MediaUploader({
 
       const payload = (await response.json()) as ApiResult<{
         qrCodeId: string;
+        mediaId: string;
         mediaType: MediaType;
         mediaUrl: string | null;
         textContent: string | null;
@@ -219,6 +221,7 @@ export function MediaUploader({
         return;
       }
 
+      setUploadedMediaId(payload.data.mediaId);
       setStep("done");
       renewTurnstileToken();
     } catch (err) {
@@ -421,7 +424,9 @@ export function MediaUploader({
         <div className="flex flex-col items-center gap-3 py-6 text-center">
           <CheckCircleIcon className="size-6" />
           <p className="text-sm font-medium">Media tersimpan.</p>
-          <Button onClick={onUploaded}>Selesai</Button>
+          <Button onClick={() => onUploaded(uploadedMediaId ?? undefined)}>
+            Selesai
+          </Button>
         </div>
       ) : null}
 
