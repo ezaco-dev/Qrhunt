@@ -112,12 +112,12 @@ export function MediaUploader({
 
   const durationRef = useRef<number | undefined>(undefined);
 
-  // Ref untuk koordinasi paralel ad + scan. State React tidak cukup karena
-  // callback melihat snapshot saat closure dibuat, bukan nilai terkini.
+  // Ref untuk koordinasi 3-arah paralel: ad + scan + upload server.
   const scanDoneRef = useRef(false);
   const adDoneRef = useRef(false);
+  const uploadDoneRef = useRef(false);
   const scanPassedRef = useRef(false);
-  const uploadTriggeredRef = useRef(false);
+  const uploadResultRef = useRef<{ mediaId: string } | null>(null);
 
   const isFileType = mediaType !== "text";
   const isBusy = isScanning || isUploading || adPending;
@@ -138,8 +138,9 @@ export function MediaUploader({
     durationRef.current = undefined;
     scanDoneRef.current = false;
     adDoneRef.current = false;
+    uploadDoneRef.current = false;
     scanPassedRef.current = false;
-    uploadTriggeredRef.current = false;
+    uploadResultRef.current = null;
   }, []);
 
   const handleFileChange = useCallback(
@@ -179,7 +180,18 @@ export function MediaUploader({
     [],
   );
 
-  const performUpload = useCallback(async () => {
+  const checkCompletion = useCallback(() => {
+    if (!adDoneRef.current || !scanDoneRef.current || !uploadDoneRef.current) {
+      return;
+    }
+    if (!scanPassedRef.current || !uploadResultRef.current) return;
+
+    setUploadedMediaId(uploadResultRef.current.mediaId);
+    setStep("done");
+    renewTurnstileToken();
+  }, [renewTurnstileToken]);
+
+  const performUpload = useCallback(async (): Promise<{ mediaId: string } | null> => {
     setIsUploading(true);
     setError(null);
 
@@ -217,17 +229,18 @@ export function MediaUploader({
       if (!payload.ok) {
         setError(payload.error);
         setStep("pick");
+        setAdPending(false);
         renewTurnstileToken();
-        return;
+        return null;
       }
 
-      setUploadedMediaId(payload.data.mediaId);
-      setStep("done");
-      renewTurnstileToken();
+      return { mediaId: payload.data.mediaId };
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unggahan gagal.");
       setStep("pick");
+      setAdPending(false);
       renewTurnstileToken();
+      return null;
     } finally {
       setIsUploading(false);
     }
@@ -241,87 +254,86 @@ export function MediaUploader({
   ]);
 
   /**
-   * Coba upload kalau KEDUA syarat terpenuhi: ad selesai + scan selesai & lolos.
-   * Dipanggil dari dua tempat (onAdComplete dan akhir scan). Yang sampai
-   * duluan menyimpan hasilnya; yang terakhir memicu upload.
-   */
-  const tryUploadAfterBoth = useCallback(() => {
-    if (uploadTriggeredRef.current) return;
-    if (!adDoneRef.current || !scanDoneRef.current) return;
-    if (!scanPassedRef.current) return;
-
-    uploadTriggeredRef.current = true;
-    void performUpload();
-  }, [performUpload]);
-
-  /**
-   * Mulai processing: iklan + scan NSFW secara paralel.
+   * Mulai processing 3-arah secara PARALEL: iklan + scan NSFW + unggah ke server.
    *
-   * Pemeriksaan NSFW di sini BUKAN penjaga. Secara teknis bisa dilewati
-   * dengan memodifikasi Client Component. Penentu sebenarnya ada di
-   * `lib/moderation.ts` (fail-closed).
+   * Ketiganya berjalan bersamaan: saat user menonton iklan, media juga dipindai
+   * dan diunggah ke server/Cloudinary secara latar belakang. Saat iklan selesai,
+   * unggahan sudah siap.
    */
   const handleSubmit = useCallback(() => {
-    setStep("processing");
-    setError(null);
-    scanDoneRef.current = false;
-    adDoneRef.current = false;
-    scanPassedRef.current = false;
-    uploadTriggeredRef.current = false;
-    setAdPending(true);
-
-    // Teks tidak punya media untuk di-scan.
-    if (mediaType === "text") {
-      scanDoneRef.current = true;
-      scanPassedRef.current = true;
-      setIsScanning(false);
-      return;
-    }
-
-    if (!file) {
+    if (mediaType !== "text" && !file) {
       setError("Tidak ada berkas yang dipilih.");
       setStep("pick");
       return;
     }
 
-    setIsScanning(true);
+    setStep("processing");
+    setError(null);
+    scanDoneRef.current = false;
+    adDoneRef.current = false;
+    uploadDoneRef.current = false;
+    scanPassedRef.current = false;
+    uploadResultRef.current = null;
+    setAdPending(true);
+
+    // (Tugas 1) Unggah ke server berjalan secara PARALEL dengan iklan & scan
     void (async () => {
-      try {
-        await getNsfwModel();
+      const res = await performUpload();
+      if (res) {
+        uploadResultRef.current = res;
+        uploadDoneRef.current = true;
+        checkCompletion();
+      }
+    })();
 
-        const result = await scanMediaFile(file, mediaType as FileMediaType);
-        setNsfwScanResult(result);
+    // (Tugas 2) Scan Client NSFW (jika gambar/video/gif)
+    if (mediaType === "text") {
+      scanDoneRef.current = true;
+      scanPassedRef.current = true;
+      setIsScanning(false);
+      checkCompletion();
+    } else if (file) {
+      setIsScanning(true);
+      void (async () => {
+        try {
+          await getNsfwModel();
 
-        if (result.isBlocked) {
+          const result = await scanMediaFile(file, mediaType as FileMediaType);
+          setNsfwScanResult(result);
+
+          if (result.isBlocked) {
+            setError(
+              `Berkas ditolak: konten terdeteksi "${result.worstCategory}" ` +
+                `(skor ${result.worstScore.toFixed(2)}).`,
+            );
+            setStep("pick");
+            setAdPending(false);
+            renewTurnstileToken();
+            return;
+          }
+
+          scanDoneRef.current = true;
+          scanPassedRef.current = true;
+          checkCompletion();
+        } catch (err) {
           setError(
-            `Berkas ditolak: konten terdeteksi "${result.worstCategory}" ` +
-              `(skor ${result.worstScore.toFixed(2)}).`,
+            err instanceof Error ? `Pemindaian gagal: ${err.message}` : "Pemindaian gagal.",
           );
           setStep("pick");
           setAdPending(false);
-          return;
+          renewTurnstileToken();
+        } finally {
+          setIsScanning(false);
         }
-
-        scanDoneRef.current = true;
-        scanPassedRef.current = true;
-        tryUploadAfterBoth();
-      } catch (err) {
-        setError(
-          err instanceof Error ? `Pemindaian gagal: ${err.message}` : "Pemindaian gagal.",
-        );
-        setStep("pick");
-        setAdPending(false);
-      } finally {
-        setIsScanning(false);
-      }
-    })();
-  }, [file, mediaType, tryUploadAfterBoth]);
+      })();
+    }
+  }, [checkCompletion, file, mediaType, performUpload, renewTurnstileToken]);
 
   const handleAdComplete = useCallback(() => {
     adDoneRef.current = true;
     setAdPending(false);
-    tryUploadAfterBoth();
-  }, [tryUploadAfterBoth]);
+    checkCompletion();
+  }, [checkCompletion]);
 
   const canSubmit = isFileType ? Boolean(file) : textContent.trim().length > 0;
 
