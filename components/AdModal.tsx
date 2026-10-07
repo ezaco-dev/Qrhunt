@@ -141,7 +141,14 @@ export function AdModal({ open, onComplete }: AdModalProps) {
 
         <div className="my-2 flex justify-center">
           <AdsterraBanner
-            atKey={process.env.NEXT_PUBLIC_ADSTERRA_MODAL_KEY}
+            atKey={
+              process.env.NEXT_PUBLIC_ADSTERRA_MODAL_KEY ||
+              "878490fbeb0aa172c7c292c05a09c5d2"
+            }
+            scriptUrlEnv={
+              process.env.NEXT_PUBLIC_ADSTERRA_MODAL_SCRIPT_URL ||
+              "https://bauval.org/21/878490fbeb0aa172c7c292c05a09c5d2"
+            }
             width={300}
             height={250}
           />

@@ -3,9 +3,11 @@
 import { useEffect, useRef } from "react";
 
 export interface AdsterraBannerProps {
-  /** Key ID Adsterra (misal '0123456789abcdef'). */
+  /** Zone/container ID Adsterra Native Banner (misal '31600725'). */
   atKey?: string;
-  format?: string;
+  /** Script URL Native Banner dari Adsterra panel. */
+  scriptUrl?: string;
+  scriptUrlEnv?: string;
   width?: number;
   height?: number;
   className?: string;
@@ -19,47 +21,42 @@ export interface AdsterraBannerProps {
  */
 export function AdsterraBanner({
   atKey,
-  format = "300x250",
+  scriptUrl,
+  scriptUrlEnv,
   width = 300,
   height = 250,
   className = "",
 }: AdsterraBannerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fallback key dari env jika tidak diberikan di prop
-  const activeKey =
+  const zoneId =
     atKey ||
     process.env.NEXT_PUBLIC_ADSTERRA_KEY ||
     process.env.NEXT_PUBLIC_ADSTERRA_MODAL_KEY;
+  const activeScriptUrl =
+    scriptUrl ||
+    scriptUrlEnv ||
+    process.env.NEXT_PUBLIC_ADSTERRA_SCRIPT_URL ||
+    process.env.NEXT_PUBLIC_ADSTERRA_MODAL_SCRIPT_URL;
 
   useEffect(() => {
-    if (!activeKey || !containerRef.current) return;
+    if (!zoneId || !activeScriptUrl || !containerRef.current) return;
 
     const container = containerRef.current;
     container.innerHTML = "";
-
-    const confScript = document.createElement("script");
-    confScript.type = "text/javascript";
-    confScript.text = `
-      atOptions = {
-        'key': '${activeKey}',
-        'format': 'iframe',
-        'height': ${height},
-        'width': ${width},
-        'params': {}
-      };
-    `;
+    const adContainer = document.createElement("div");
+    adContainer.id = `container-${zoneId}`;
 
     const invokeScript = document.createElement("script");
     invokeScript.type = "text/javascript";
-    invokeScript.src = `//www.highperformanceformat.com/${activeKey}/invoke.js`;
+    invokeScript.src = activeScriptUrl;
     invokeScript.async = true;
 
-    container.appendChild(confScript);
+    container.appendChild(adContainer);
     container.appendChild(invokeScript);
-  }, [activeKey, format, width, height]);
+  }, [zoneId, activeScriptUrl]);
 
-  if (!activeKey) {
+  if (!zoneId || !activeScriptUrl) {
     return (
       <div
         className={`flex flex-col items-center justify-center rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5 p-4 text-center text-xs text-amber-600 dark:text-amber-400 ${className}`}
@@ -67,7 +64,7 @@ export function AdsterraBanner({
       >
         <span className="font-semibold">Area Iklan Adsterra</span>
         <span className="text-[11px] text-muted-foreground mt-1">
-          Isi <code className="rounded bg-muted px-1">NEXT_PUBLIC_ADSTERRA_KEY</code> di env
+          Isi <code className="rounded bg-muted px-1">NEXT_PUBLIC_ADSTERRA_KEY</code> dan <code className="rounded bg-muted px-1">NEXT_PUBLIC_ADSTERRA_SCRIPT_URL</code>
         </span>
       </div>
     );

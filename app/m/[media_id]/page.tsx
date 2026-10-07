@@ -90,7 +90,14 @@ export default async function MediaSubIdPage(props: {
         <ReportButton qrCodeId={media.qr_code_id} />
         <div className="mt-4 flex w-full justify-center">
           <AdsterraBanner
-            atKey={process.env.NEXT_PUBLIC_ADSTERRA_BOTTOM_KEY}
+            atKey={
+              process.env.NEXT_PUBLIC_ADSTERRA_BOTTOM_KEY ||
+              "878490fbeb0aa172c7c292c05a09c5d2"
+            }
+            scriptUrlEnv={
+              process.env.NEXT_PUBLIC_ADSTERRA_BOTTOM_SCRIPT_URL ||
+              "https://bauval.org/21/878490fbeb0aa172c7c292c05a09c5d2"
+            }
             width={300}
             height={250}
           />
