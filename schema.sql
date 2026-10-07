@@ -31,6 +31,11 @@ create table if not exists public.qr_medias (
 
   report_count integer not null default 0 check (report_count >= 0),
   is_hidden    boolean not null default false,
+  is_disabled  boolean not null default false,
+
+  -- Metadata admin-only. Tidak dikirim ke halaman publik.
+  admin_label      text,
+  admin_group_name text,
 
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),

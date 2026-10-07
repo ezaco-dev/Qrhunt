@@ -136,13 +136,26 @@ export async function getActiveMedia(qrCodeId: string): Promise<PublicQrMedia | 
   try {
     const supabase = getSupabaseAdminClient();
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("qr_medias")
       .select(PUBLIC_COLUMNS)
       .eq("qr_code_id", qrCodeId)
       .eq("is_hidden", false)
+      .eq("is_disabled", false)
       .limit(1)
       .maybeSingle();
+
+    if (error?.code === "PGRST204") {
+      const retry = await supabase
+        .from("qr_medias")
+        .select(PUBLIC_COLUMNS)
+        .eq("qr_code_id", qrCodeId)
+        .eq("is_hidden", false)
+        .limit(1)
+        .maybeSingle();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       console.error("[lib/media] gagal membaca media aktif:", error.message);
@@ -173,13 +186,26 @@ export async function getMediaBySubId(mediaId: string): Promise<PublicQrMedia | 
   try {
     const supabase = getSupabaseAdminClient();
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("qr_medias")
       .select(PUBLIC_COLUMNS)
       .eq("id", mediaId)
       .eq("is_hidden", false)
+      .eq("is_disabled", false)
       .limit(1)
       .maybeSingle();
+
+    if (error?.code === "PGRST204") {
+      const retry = await supabase
+        .from("qr_medias")
+        .select(PUBLIC_COLUMNS)
+        .eq("id", mediaId)
+        .eq("is_hidden", false)
+        .limit(1)
+        .maybeSingle();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error || !data) {
       if (error) {
