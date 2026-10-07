@@ -114,8 +114,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   let { data, error } = await supabase
     .from("qr_medias")
     .insert(rows)
-    .select("id, qr_code_id")
-    .order("created_at", { ascending: false });
+    .select("id, qr_code_id");
 
   if (error?.code === "PGRST204") {
     const fallbackRows = rows.map(({ admin_label, admin_group_name, ...row }) => {
@@ -126,8 +125,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const retry = await supabase
       .from("qr_medias")
       .insert(fallbackRows)
-      .select("id, qr_code_id")
-      .order("created_at", { ascending: false });
+      .select("id, qr_code_id");
     data = retry.data;
     error = retry.error;
   }
