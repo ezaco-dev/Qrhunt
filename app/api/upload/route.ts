@@ -324,9 +324,25 @@ export async function POST(request: Request) {
     unique_uploaders_since: newUniqueUploaders,
   };
 
-  const { error: upsertError } = await supabase
+  let { error: upsertError } = await supabase
     .from("qr_medias")
     .upsert(row, { onConflict: "qr_code_id" });
+
+  // Kalau kolom `last_uploader_ip` / `unique_uploaders_since` belum ada di DB
+  // (karena `ALTER TABLE` belum dijalankan di Supabase), coba upsert ulang
+  // tanpa dua kolom rate-limit tersebut agar upload tidak gagal 500.
+  if (upsertError && (upsertError.code === "PGRST204" || upsertError.message.includes("column"))) {
+    console.warn(
+      "[api/upload] Kolom rate-limit belum ada di database (PGRST204). Upsert ulang tanpa rate-limit...",
+    );
+    const { last_uploader_ip, unique_uploaders_since, ...baseRow } = row;
+    void last_uploader_ip;
+    void unique_uploaders_since;
+    const retry = await supabase
+      .from("qr_medias")
+      .upsert(baseRow, { onConflict: "qr_code_id" });
+    upsertError = retry.error;
+  }
 
   if (upsertError) {
     console.error("[api/upload] gagal menulis ke database:", upsertError.message);
