@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Progress, ProgressIndicator, ProgressTrack } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import { AdsterraBanner } from "@/components/AdsterraBanner";
 
 /** Durasi tonton iklan, detik. Env `NEXT_PUBLIC_AD_DURATION_SECONDS`, default 8. */
 function getAdDurationSeconds(): number {
@@ -137,6 +138,14 @@ export function AdModal({ open, onComplete }: AdModalProps) {
             <ProgressIndicator />
           </ProgressTrack>
         </Progress>
+
+        <div className="my-2 flex justify-center">
+          <AdsterraBanner
+            atKey={process.env.NEXT_PUBLIC_ADSTERRA_MODAL_KEY}
+            width={300}
+            height={250}
+          />
+        </div>
 
         <p className="text-sm text-muted-foreground" aria-live="polite">
           {isDone ? "Iklan selesai." : `Sisa waktu: ${secondsLeft} detik`}

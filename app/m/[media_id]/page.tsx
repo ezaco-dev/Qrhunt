@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { HomeIcon } from "lucide-react";
 
+import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { MediaTypeBadge, MediaViewer } from "@/components/MediaViewer";
 import { QrActions } from "@/components/QrActions";
 import { QrKickedNotice } from "@/components/QrKickedNotice";
@@ -87,6 +88,13 @@ export default async function MediaSubIdPage(props: {
           Diubah terakhir {TIMESTAMP_FORMAT.format(new Date(media.updated_at))}
         </p>
         <ReportButton qrCodeId={media.qr_code_id} />
+        <div className="mt-4 flex w-full justify-center">
+          <AdsterraBanner
+            atKey={process.env.NEXT_PUBLIC_ADSTERRA_BOTTOM_KEY}
+            width={300}
+            height={250}
+          />
+        </div>
       </footer>
     </main>
   );
