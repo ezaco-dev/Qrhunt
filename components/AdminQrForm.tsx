@@ -113,7 +113,7 @@ export function AdminQrForm() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [selectedQrIds, setSelectedQrIds] = useState<Set<string>>(new Set());
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(["Tanpa Grup"]));
+  const [closedGroups, setClosedGroups] = useState<Set<string>>(new Set());
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -235,7 +235,12 @@ export function AdminQrForm() {
         }),
       ),
     );
-    setOpenGroups((prev) => new Set(prev).add(group));
+    // Pastikan grup hasil pemindahan tampil terbuka (default semua grup terbuka).
+    setClosedGroups((prev) => {
+      const next = new Set(prev);
+      next.delete(group);
+      return next;
+    });
     setSelectedQrIds(new Set());
     await loadRows();
   }, [groupName, loadRows, selectedQrIds]);
@@ -316,15 +321,116 @@ export function AdminQrForm() {
     window.setTimeout(() => document.body.classList.remove("printing-qr"), 500);
   }, [status]);
 
-  const groups = rows.reduce<Record<string, AdminQrRow[]>>((acc, row) => {
-    const key = row.admin_group_name || "Tanpa Grup";
-    acc[key] = [...(acc[key] ?? []), row];
+  // Aturan nama: nama dipakai >1 QR = grup (punya header + bisa dilipat);
+  // nama dipakai ≤1 QR = QR biasa, tampil tanpa header. Tidak ada "Tanpa Grup".
+  const namedByGroup = rows.reduce<Record<string, AdminQrRow[]>>((acc, row) => {
+    const key = row.admin_group_name?.trim();
+    if (key) (acc[key] = acc[key] ?? []).push(row);
     return acc;
   }, {});
+  const groupedEntries = Object.entries(namedByGroup).filter(([, items]) => items.length > 1);
+  const groupedIds = new Set(groupedEntries.flatMap(([, items]) => items.map((row) => row.qr_code_id)));
+  const flatRows = rows.filter((row) => !groupedIds.has(row.qr_code_id));
+
+  const locationSummary = (items: AdminQrRow[]): string => {
+    const labels = [...new Set(items.map((row) => row.admin_label?.trim()).filter((label): label is string => Boolean(label)))];
+    if (labels.length === 0) return "";
+    if (labels.length === 1) return labels[0];
+    return `${labels[0]} (+${labels.length - 1} lokasi lain)`;
+  };
 
   // Sekali satu baris diaktifkan, checkbox muncul di SEMUA baris agar bisa
   // langsung centang massal; tetap tampil selama masih ada yang tercentang.
   const showCheckboxes = activeRowId !== null || selectedQrIds.size > 0;
+
+  // Satu baris QR dipakai dua tempat: daftar grup dan daftar QR individual.
+  const renderRow = (row: AdminQrRow) => {
+    const isActive = activeRowId === row.qr_code_id;
+    const detail = [row.admin_group_name?.trim(), row.admin_label?.trim()].filter(Boolean).join(" • ");
+    return (
+      <div key={row.qr_code_id} className="flex items-center gap-2 py-2">
+        {/* Checkbox muncul di semua baris begitu satu baris diaktifkan,
+            dengan animasi fade+zoom singkat. */}
+        {showCheckboxes && (
+          <input
+            type="checkbox"
+            checked={selectedQrIds.has(row.qr_code_id)}
+            onChange={() => toggleSelected(row.qr_code_id)}
+            aria-label={`Pilih ${row.qr_code_id}`}
+            className="shrink-0 animate-in fade-in-0 zoom-in-95 duration-200"
+          />
+        )}
+
+        <button
+          type="button"
+          onClick={() => setActiveRowId(isActive ? null : row.qr_code_id)}
+          className="min-w-0 flex-1 text-left"
+        >
+          <p className="truncate font-mono text-sm" title={row.qr_code_id}>
+            {shortText(row.qr_code_id, 20, 6)}
+          </p>
+          <p className="truncate text-xs text-muted-foreground" title={detail}>
+            {detail || "Belum ditandai lokasi"}
+          </p>
+        </button>
+
+        {/* Action muncul di kanan nama, hanya untuk baris aktif.
+            Ikon berwarna, bukan teks: baris sempit di mobile supaya
+            nama QR tidak tertutup/terdorong. */}
+        {isActive && (
+          <div className="flex shrink-0 items-center gap-1 animate-in fade-in-0 slide-in-from-right-3 duration-200">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => patchQr(row.qr_code_id, { is_disabled: !row.is_disabled })}
+              aria-label={row.is_disabled ? "Aktifkan QR" : "Nonaktifkan QR"}
+              title={row.is_disabled ? "Aktifkan QR" : "Nonaktifkan QR"}
+            >
+              {row.is_disabled ? (
+                <EyeOffIcon className="text-amber-500" />
+              ) : (
+                <EyeIcon className="text-emerald-600 dark:text-emerald-400" />
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Edit lokasi"
+              title="Edit lokasi"
+              onClick={() =>
+                patchQr(row.qr_code_id, {
+                  admin_label: window.prompt("Lokasi QR", row.admin_label ?? "") || row.admin_label,
+                })
+              }
+            >
+              <MapPinIcon className="text-blue-600 dark:text-blue-400" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Buka halaman publik"
+              title="Buka halaman publik"
+              render={<Link href={`/q/${row.qr_code_id}`} />}
+            >
+              <ExternalLinkIcon className="text-slate-500" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Hapus QR"
+              title="Hapus QR"
+              onClick={async () => {
+                await deleteQr(row.qr_code_id);
+                setActiveRowId(null);
+              }}
+            >
+              <Trash2Icon className="text-red-600 dark:text-red-400" />
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -337,7 +443,7 @@ export function AdminQrForm() {
           <Input
             value={groupName}
             onChange={(e) => setGroupName(e.target.value)}
-            placeholder="Nama QR / grup"
+            placeholder="Nama QR (dipakai >1 QR = grup)"
             maxLength={120}
           />
           {/* Lokasi muncul halus: grid-rows 0fr -> 1fr memberi transisi tinggi
@@ -444,111 +550,48 @@ export function AdminQrForm() {
         )}
 
         <div className="mt-4 flex flex-col gap-4">
-          {Object.entries(groups).map(([group, items]) => (
-            <div key={group} className="rounded-lg border p-3">
-              <button
-                type="button"
-                onClick={() => setOpenGroups((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(group)) next.delete(group);
-                  else next.add(group);
-                  return next;
-                })}
-                className="flex w-full items-center justify-between text-left text-sm font-semibold"
-              >
-                <span className="truncate">{shortText(group, 24, 8)} <span className="text-muted-foreground">({items.length})</span></span>
-                <span>{openGroups.has(group) ? "−" : "+"}</span>
-              </button>
-              {openGroups.has(group) && <div className="mt-2 divide-y">
-                {items.map((row) => {
-                  const isActive = activeRowId === row.qr_code_id;
-                  return (
-                    <div key={row.qr_code_id} className="flex items-center gap-2 py-2">
-                      {/* Checkbox muncul di semua baris begitu satu baris diaktifkan,
-                          dengan animasi fade+zoom singkat. */}
-                      {showCheckboxes && (
-                        <input
-                          type="checkbox"
-                          checked={selectedQrIds.has(row.qr_code_id)}
-                          onChange={() => toggleSelected(row.qr_code_id)}
-                          aria-label={`Pilih ${row.qr_code_id}`}
-                          className="shrink-0 animate-in fade-in-0 zoom-in-95 duration-200"
-                        />
-                      )}
+          {/* QR individual: namanya dipakai ≤1 QR, jadi bukan grup — tampil tanpa header. */}
+          {flatRows.length > 0 && (
+            <div className="divide-y rounded-lg border p-3">{flatRows.map(renderRow)}</div>
+          )}
 
-                      <button
-                        type="button"
-                        onClick={() => setActiveRowId(isActive ? null : row.qr_code_id)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <p className="truncate font-mono text-sm" title={row.qr_code_id}>
-                          {shortText(row.qr_code_id, 20, 6)}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground" title={row.admin_label ?? ""}>
-                          {row.admin_label || "Belum ditandai lokasi"}
-                        </p>
-                      </button>
-
-                      {/* Action muncul di kanan nama, hanya untuk baris aktif.
-                          Ikon berwarna, bukan teks: baris sempit di mobile supaya
-                          nama QR tidak tertutup/terdorong. */}
-                      {isActive && (
-                        <div className="flex shrink-0 items-center gap-1 animate-in fade-in-0 slide-in-from-right-3 duration-200">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => patchQr(row.qr_code_id, { is_disabled: !row.is_disabled })}
-                            aria-label={row.is_disabled ? "Aktifkan QR" : "Nonaktifkan QR"}
-                            title={row.is_disabled ? "Aktifkan QR" : "Nonaktifkan QR"}
-                          >
-                            {row.is_disabled ? (
-                              <EyeOffIcon className="text-amber-500" />
-                            ) : (
-                              <EyeIcon className="text-emerald-600 dark:text-emerald-400" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            aria-label="Edit lokasi"
-                            title="Edit lokasi"
-                            onClick={() =>
-                              patchQr(row.qr_code_id, {
-                                admin_label: window.prompt("Lokasi QR", row.admin_label ?? "") || row.admin_label,
-                              })
-                            }
-                          >
-                            <MapPinIcon className="text-blue-600 dark:text-blue-400" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            aria-label="Buka halaman publik"
-                            title="Buka halaman publik"
-                            render={<Link href={`/q/${row.qr_code_id}`} />}
-                          >
-                            <ExternalLinkIcon className="text-slate-500" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            aria-label="Hapus QR"
-                            title="Hapus QR"
-                            onClick={async () => {
-                              await deleteQr(row.qr_code_id);
-                              setActiveRowId(null);
-                            }}
-                          >
-                            <Trash2Icon className="text-red-600 dark:text-red-400" />
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>}
-            </div>
-          ))}
+          {/* Grup: nama dipakai >1 QR. Header = nama + lokasi + jumlah QR. */}
+          {groupedEntries.map(([group, items]) => {
+            const isOpen = !closedGroups.has(group);
+            const location = locationSummary(items);
+            return (
+              <div key={group} className="rounded-lg border p-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setClosedGroups((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(group)) next.delete(group);
+                      else next.add(group);
+                      return next;
+                    })
+                  }
+                  aria-expanded={isOpen}
+                  className="flex w-full items-center justify-between gap-2 text-left text-sm font-semibold"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">{shortText(group, 24, 8)}</span>
+                    {location && (
+                      <span className="truncate text-xs font-normal text-muted-foreground">
+                        {location}
+                      </span>
+                    )}
+                    {/* shrink-0: jumlah QR tetap terlihat walau nama panjang. */}
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium">
+                      {items.length} QR
+                    </span>
+                  </span>
+                  <span className="shrink-0">{isOpen ? "−" : "+"}</span>
+                </button>
+                {isOpen && <div className="mt-2 divide-y">{items.map(renderRow)}</div>}
+              </div>
+            );
+          })}
         </div>
       </section>
     </div>
