@@ -109,6 +109,8 @@ export function AdminQrForm() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupLocation, setGroupLocation] = useState("");
+  // Kosong/1 = bukan grup; >1 = generate sekaligus jadi grup.
+  const [count, setCount] = useState(1);
   const [manualScan, setManualScan] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
@@ -135,6 +137,12 @@ export function AdminQrForm() {
   }, [loadRows]);
 
   const handleCreate = useCallback(async () => {
+    // >1 QR tanpa nama tidak bisa jadi grup (semuanya QR individual), jadi tolak.
+    if (count > 1 && !groupName.trim()) {
+      setStatus({ kind: "error", message: "Jumlah QR lebih dari 1 harus diisi nama grupnya." });
+      return;
+    }
+
     setCopied(false);
     setStatus({ kind: "loading" });
 
@@ -143,6 +151,7 @@ export function AdminQrForm() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          count,
           label: groupLocation.trim() || undefined,
           group_name: groupName.trim() || undefined,
         }),
@@ -177,7 +186,7 @@ export function AdminQrForm() {
     } catch {
       setStatus({ kind: "error", message: "Tidak bisa menghubungi server. Coba lagi." });
     }
-  }, [groupLocation, groupName, loadRows]);
+  }, [count, groupLocation, groupName, loadRows]);
 
   const patchQr = useCallback(async (qrCodeId: string, body: Partial<AdminQrRow>) => {
     const response = await fetch(`/api/admin/qr/${encodeURIComponent(qrCodeId)}`, {
@@ -343,9 +352,26 @@ export function AdminQrForm() {
   // langsung centang massal; tetap tampil selama masih ada yang tercentang.
   const showCheckboxes = activeRowId !== null || selectedQrIds.size > 0;
 
+  // Mode selection (ada yang tercentang): action pindah ke QR terpilih paling
+  // bawah sesuai urutan tampil. Tanpa selection: action tetap di baris diklik.
+  const actionAnchorId = (() => {
+    if (selectedQrIds.size > 0) {
+      const visibleOrder = [
+        ...flatRows,
+        ...groupedEntries.flatMap(([name, items]) => (closedGroups.has(name) ? [] : items)),
+      ];
+      const lastSelected = visibleOrder
+        .filter((row) => selectedQrIds.has(row.qr_code_id))
+        .pop()?.qr_code_id;
+      if (lastSelected) return lastSelected;
+    }
+    return activeRowId;
+  })();
+
   // Satu baris QR dipakai dua tempat: daftar grup dan daftar QR individual.
   const renderRow = (row: AdminQrRow) => {
     const isActive = activeRowId === row.qr_code_id;
+    const showActions = row.qr_code_id === actionAnchorId;
     const detail = [row.admin_group_name?.trim(), row.admin_label?.trim()].filter(Boolean).join(" • ");
     return (
       <div key={row.qr_code_id} className="flex items-center gap-2 py-2">
@@ -374,10 +400,10 @@ export function AdminQrForm() {
           </p>
         </button>
 
-        {/* Action muncul di kanan nama, hanya untuk baris aktif.
-            Ikon berwarna, bukan teks: baris sempit di mobile supaya
-            nama QR tidak tertutup/terdorong. */}
-        {isActive && (
+        {/* Action muncul di kanan nama. Tanpa selection: baris yang diklik.
+            Mode selection: baris terpilih paling bawah. Ikon berwarna, bukan
+            teks, supaya nama QR tidak tertutup/terdorong. */}
+        {showActions && (
           <div className="flex shrink-0 items-center gap-1 animate-in fade-in-0 slide-in-from-right-3 duration-200">
             <Button
               variant="outline"
@@ -455,12 +481,25 @@ export function AdminQrForm() {
             }`}
           >
             <div className="overflow-hidden">
-              <div className="pt-1">
+              {/* Grid 6 kolom: lokasi 5 kolom, jumlah 1 kolom = 1/5 lebar lokasi. */}
+              <div className="grid grid-cols-6 gap-1 pt-1">
                 <Input
                   value={groupLocation}
                   onChange={(e) => setGroupLocation(e.target.value)}
                   placeholder="Lokasi (opsional): Meja 1, Kasir, ..."
                   maxLength={120}
+                  className="col-span-5"
+                />
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={count}
+                  onChange={(e) => setCount(Number(e.target.value) || 1)}
+                  placeholder="Jml"
+                  aria-label="Jumlah QR"
+                  title="Jumlah QR: kosong/1 = bukan grup, >1 = grup"
+                  className="col-span-1"
                 />
               </div>
             </div>
@@ -468,7 +507,11 @@ export function AdminQrForm() {
         </div>
         <Button onClick={handleCreate} disabled={status.kind === "loading"} size="lg">
           <QrCodeIcon className="size-5" />
-          {status.kind === "loading" ? "Membuat..." : "Generate QR"}
+          {status.kind === "loading"
+            ? "Membuat..."
+            : count > 1
+              ? `Generate ${count} QR`
+              : "Generate QR"}
         </Button>
       </div>
 
