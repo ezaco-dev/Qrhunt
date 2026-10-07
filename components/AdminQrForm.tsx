@@ -322,6 +322,10 @@ export function AdminQrForm() {
     return acc;
   }, {});
 
+  // Sekali satu baris diaktifkan, checkbox muncul di SEMUA baris agar bisa
+  // langsung centang massal; tetap tampil selama masih ada yang tercentang.
+  const showCheckboxes = activeRowId !== null || selectedQrIds.size > 0;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-xl border bg-card p-6 shadow-sm flex flex-col items-center text-center gap-4">
@@ -414,7 +418,7 @@ export function AdminQrForm() {
         {/* Bar aksi massal: baru muncul setelah minimal 2 QR dipilih, dan hanya
             ikon berwarna — teks berat di sini menutupi nama QR di bawahnya. */}
         {selectedQrIds.size >= 2 && (
-          <div className="mt-4 flex items-center justify-end gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+          <div className="mt-4 flex items-center justify-end gap-2 rounded-lg border bg-muted/40 px-3 py-2 animate-in fade-in-0 slide-in-from-top-2 duration-200">
             <span className="text-xs font-medium text-muted-foreground">
               {selectedQrIds.size} QR dipilih
             </span>
@@ -460,14 +464,15 @@ export function AdminQrForm() {
                   const isActive = activeRowId === row.qr_code_id;
                   return (
                     <div key={row.qr_code_id} className="flex items-center gap-2 py-2">
-                      {/* Checkbox hanya muncul setelah baris dipilih lewat klik nama. */}
-                      {isActive && (
+                      {/* Checkbox muncul di semua baris begitu satu baris diaktifkan,
+                          dengan animasi fade+zoom singkat. */}
+                      {showCheckboxes && (
                         <input
                           type="checkbox"
                           checked={selectedQrIds.has(row.qr_code_id)}
                           onChange={() => toggleSelected(row.qr_code_id)}
                           aria-label={`Pilih ${row.qr_code_id}`}
-                          className="shrink-0"
+                          className="shrink-0 animate-in fade-in-0 zoom-in-95 duration-200"
                         />
                       )}
 
@@ -488,7 +493,7 @@ export function AdminQrForm() {
                           Ikon berwarna, bukan teks: baris sempit di mobile supaya
                           nama QR tidak tertutup/terdorong. */}
                       {isActive && (
-                        <div className="flex shrink-0 items-center gap-1">
+                        <div className="flex shrink-0 items-center gap-1 animate-in fade-in-0 slide-in-from-right-3 duration-200">
                           <Button
                             variant="outline"
                             size="sm"
