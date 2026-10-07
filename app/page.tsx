@@ -1,14 +1,10 @@
-import Link from "next/link";
 import {
-  ArrowRightIcon,
   FileTextIcon,
   FilmIcon,
   ImageIcon,
   ImagesIcon,
   ShieldCheckIcon,
 } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
 
 /**
  * Tiga langkah utama produk.
@@ -118,14 +114,8 @@ export default function HomePage() {
         </ul>
       </section>
 
-      <footer className="flex flex-col items-start gap-3 border-t pt-6">
-        <p className="text-sm text-muted-foreground">
-          Lihat contoh QR yang sudah terisi.
-        </p>
-        <Button render={<Link href="/q/UMKM_001" />}>
-          Buka /q/UMKM_001
-          <ArrowRightIcon />
-        </Button>
+      <footer className="border-t pt-6 text-center text-xs text-muted-foreground">
+        &copy; {new Date().getFullYear()} QrHunt. All rights reserved.
       </footer>
     </main>
   );
