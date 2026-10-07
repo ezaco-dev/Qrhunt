@@ -102,12 +102,13 @@ export function AdminQrForm() {
   const [rows, setRows] = useState<AdminQrRow[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [groupName, setGroupName] = useState("");
-  const [count, setCount] = useState(1);
+  const [groupLocation, setGroupLocation] = useState("");
   const [manualScan, setManualScan] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [selectedQrIds, setSelectedQrIds] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(["Tanpa Grup"]));
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -135,7 +136,10 @@ export function AdminQrForm() {
       const response = await fetch("/api/admin/qr", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ count, group_name: groupName.trim() || undefined }),
+        body: JSON.stringify({
+          label: groupLocation.trim() || undefined,
+          group_name: groupName.trim() || undefined,
+        }),
       });
       const payload = (await response.json()) as {
         ok: boolean;
@@ -167,7 +171,7 @@ export function AdminQrForm() {
     } catch {
       setStatus({ kind: "error", message: "Tidak bisa menghubungi server. Coba lagi." });
     }
-  }, [count, groupName, loadRows]);
+  }, [groupLocation, groupName, loadRows]);
 
   const patchQr = useCallback(async (qrCodeId: string, body: Partial<AdminQrRow>) => {
     const response = await fetch(`/api/admin/qr/${encodeURIComponent(qrCodeId)}`, {
@@ -208,6 +212,7 @@ export function AdminQrForm() {
     if (!ok) return;
     await Promise.all([...selectedQrIds].map((id) => fetch(`/api/admin/qr/${encodeURIComponent(id)}`, { method: "DELETE" })));
     setSelectedQrIds(new Set());
+    setActiveRowId(null);
     await loadRows();
   }, [loadRows, selectedQrIds]);
 
@@ -318,13 +323,36 @@ export function AdminQrForm() {
           <SparklesIcon className="size-6" />
         </div>
         <h2 className="text-lg font-semibold">Generate QR Super Unik</h2>
-        <div className="grid w-full max-w-md gap-3 sm:grid-cols-2">
-          <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Nama grup (opsional)" />
-          <Input type="number" min={1} max={100} value={count} onChange={(e) => setCount(Number(e.target.value) || 1)} />
+        <div className="grid w-full max-w-md gap-1">
+          <Input
+            value={groupName}
+            onChange={(e) => setGroupName(e.target.value)}
+            placeholder="Nama QR / grup"
+            maxLength={120}
+          />
+          {/* Lokasi muncul halus: grid-rows 0fr -> 1fr memberi transisi tinggi
+              tanpa perlu tahu tinggi konten. Konten selalu di-render agar
+              transisi masuk tetap jalan (mount mendadak tidak bisa dianimasikan). */}
+          <div
+            className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+              groupName.trim() ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+            }`}
+          >
+            <div className="overflow-hidden">
+              <div className="pt-1">
+                <Input
+                  value={groupLocation}
+                  onChange={(e) => setGroupLocation(e.target.value)}
+                  placeholder="Lokasi (opsional): Meja 1, Kasir, ..."
+                  maxLength={120}
+                />
+              </div>
+            </div>
+          </div>
         </div>
         <Button onClick={handleCreate} disabled={status.kind === "loading"} size="lg">
           <QrCodeIcon className="size-5" />
-          {status.kind === "loading" ? "Membuat..." : `Generate ${count} QR`}
+          {status.kind === "loading" ? "Membuat..." : "Generate QR"}
         </Button>
       </div>
 
@@ -377,13 +405,19 @@ export function AdminQrForm() {
         {scannerOpen && <video ref={videoRef} className="mt-3 aspect-video w-full max-w-sm rounded-lg border bg-black" muted playsInline />}
         {scanMessage && <p className="mt-2 text-sm text-muted-foreground">{scanMessage}</p>}
 
-        {selectedQrIds.size > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3">
-            <span className="text-sm font-medium">{selectedQrIds.size} QR dipilih</span>
-            <Button variant="outline" size="sm" onClick={bulkSetGroup}>Masukkan ke Grup</Button>
-            <Button variant="outline" size="sm" onClick={bulkDelete}>Hapus Terpilih</Button>
-          </div>
-        )}
+        {/* Action bar paling atas list: selalu terlihat, dipakai untuk aksi massal
+            atas QR yang sudah dipilih lewat checkbox per baris. */}
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3">
+          <span className="text-sm font-medium">
+            {selectedQrIds.size > 0 ? `${selectedQrIds.size} QR dipilih` : "Pilih QR untuk aksi massal"}
+          </span>
+          <Button variant="outline" size="sm" disabled={selectedQrIds.size === 0} onClick={bulkSetGroup}>
+            Masukkan ke Grup
+          </Button>
+          <Button variant="outline" size="sm" disabled={selectedQrIds.size === 0} onClick={bulkDelete}>
+            Hapus Terpilih
+          </Button>
+        </div>
 
         <div className="mt-4 flex flex-col gap-4">
           {Object.entries(groups).map(([group, items]) => (
@@ -402,30 +436,73 @@ export function AdminQrForm() {
                 <span>{openGroups.has(group) ? "−" : "+"}</span>
               </button>
               {openGroups.has(group) && <div className="mt-2 divide-y">
-                {items.map((row) => (
-                  <div key={row.qr_code_id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-start gap-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedQrIds.has(row.qr_code_id)}
-                        onChange={() => toggleSelected(row.qr_code_id)}
-                        className="mt-1"
-                      />
-                      <div className="min-w-0">
-                      <p className="truncate font-mono text-sm" title={row.qr_code_id}>{shortText(row.qr_code_id, 20, 6)}</p>
-                      <p className="text-xs text-muted-foreground">{row.admin_label || "Belum ditandai lokasi"}</p>
-                      </div>
+                {items.map((row) => {
+                  const isActive = activeRowId === row.qr_code_id;
+                  return (
+                    <div key={row.qr_code_id} className="flex items-center gap-2 py-2">
+                      {/* Checkbox hanya muncul setelah baris dipilih lewat klik nama. */}
+                      {isActive && (
+                        <input
+                          type="checkbox"
+                          checked={selectedQrIds.has(row.qr_code_id)}
+                          onChange={() => toggleSelected(row.qr_code_id)}
+                          aria-label={`Pilih ${row.qr_code_id}`}
+                          className="shrink-0"
+                        />
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveRowId(isActive ? null : row.qr_code_id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <p className="truncate font-mono text-sm" title={row.qr_code_id}>
+                          {shortText(row.qr_code_id, 20, 6)}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground" title={row.admin_label ?? ""}>
+                          {row.admin_label || "Belum ditandai lokasi"}
+                        </p>
+                      </button>
+
+                      {/* Action muncul di kanan nama, hanya untuk baris aktif. */}
+                      {isActive && (
+                        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => patchQr(row.qr_code_id, { is_disabled: !row.is_disabled })}
+                          >
+                            {row.is_disabled ? "Aktifkan" : "Nonaktifkan"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              patchQr(row.qr_code_id, {
+                                admin_label: window.prompt("Lokasi QR", row.admin_label ?? "") || row.admin_label,
+                              })
+                            }
+                          >
+                            Lokasi
+                          </Button>
+                          <Button variant="outline" size="sm" render={<Link href={`/q/${row.qr_code_id}`} />}>
+                            Buka
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              await deleteQr(row.qr_code_id);
+                              setActiveRowId(null);
+                            }}
+                          >
+                            Hapus
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant={row.is_disabled ? "default" : "outline"} size="sm" onClick={() => patchQr(row.qr_code_id, { is_disabled: !row.is_disabled })}>
-                        {row.is_disabled ? "Aktifkan" : "Nonaktifkan"}
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => patchQr(row.qr_code_id, { admin_label: window.prompt("Lokasi QR", row.admin_label ?? "") || row.admin_label })}>Edit Lokasi</Button>
-                      <Button variant="outline" size="sm" render={<Link href={`/q/${row.qr_code_id}`} />}>Buka</Button>
-                      <Button variant="outline" size="sm" onClick={() => deleteQr(row.qr_code_id)}>Hapus</Button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>}
             </div>
           ))}
