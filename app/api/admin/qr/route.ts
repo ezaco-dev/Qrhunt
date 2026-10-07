@@ -26,11 +26,26 @@ export async function GET(): Promise<NextResponse> {
 
   try {
     const supabase = getSupabaseAdminClient();
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("qr_medias")
       .select("id, qr_code_id, media_type, created_at, updated_at, is_hidden, is_disabled, admin_label, admin_group_name")
       .order("created_at", { ascending: false })
       .limit(500);
+
+    if (error?.code === "PGRST204") {
+      const retry = await supabase
+        .from("qr_medias")
+        .select("id, qr_code_id, media_type, created_at, updated_at, is_hidden")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      data = (retry.data ?? []).map((row) => ({
+        ...row,
+        is_disabled: false,
+        admin_label: null,
+        admin_group_name: null,
+      }));
+      error = retry.error;
+    }
 
     if (error) throw error;
     return NextResponse.json({ ok: true, data });
@@ -96,11 +111,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     admin_group_name: groupName,
   }));
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("qr_medias")
     .insert(rows)
     .select("id, qr_code_id")
     .order("created_at", { ascending: false });
+
+  if (error?.code === "PGRST204") {
+    const fallbackRows = rows.map(({ admin_label, admin_group_name, ...row }) => {
+      void admin_label;
+      void admin_group_name;
+      return row;
+    });
+    const retry = await supabase
+      .from("qr_medias")
+      .insert(fallbackRows)
+      .select("id, qr_code_id")
+      .order("created_at", { ascending: false });
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     if (error.code === "23505") {
@@ -123,8 +153,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   return NextResponse.json({
     ok: true,
-    qr_code_id: data[0]?.qr_code_id,
-    media_id: data[0]?.id,
-    items: data,
+    qr_code_id: data?.[0]?.qr_code_id,
+    media_id: data?.[0]?.id,
+    items: data ?? [],
   });
 }
