@@ -55,6 +55,12 @@ export async function verifyTurnstileToken(
   const secretKey = process.env.TURNSTILE_SECRET_KEY;
   const submitted = (token ?? "").trim();
 
+  // Mode development: verifikasi anti-bot dilewati otomatis agar testing lokal
+  // berjalan lancar tanpa perlu mengurusi Cloudflare Turnstile.
+  if (process.env.NODE_ENV === "development") {
+    return { success: true, isPlaceholder: true };
+  }
+
   if (!secretKey) {
     if (
       submitted.length === 0 ||

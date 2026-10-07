@@ -48,6 +48,19 @@ export interface TurnstileWidgetProps {
 }
 
 export function TurnstileWidget({ onToken, onFailure }: TurnstileWidgetProps) {
+  // Mode development: Turnstile dilewati otomatis supaya dev server lokal
+  // bisa dicoba tanpa terhalang widget / pembatasan domain Cloudflare.
+  if (process.env.NODE_ENV === "development") {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-dashed border-amber-500/50 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+        <ShieldAlertIcon className="mt-0.5 size-4 shrink-0" />
+        <span>
+          Mode Development: anti-bot Turnstile dilewati otomatis di localhost.
+        </span>
+      </div>
+    );
+  }
+
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
   if (!siteKey) {

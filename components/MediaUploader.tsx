@@ -322,9 +322,10 @@ export function MediaUploader({
 
   const canSubmit = isFileType ? Boolean(file) : textContent.trim().length > 0;
 
-  const isAwaitingTurnstile = Boolean(
-    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
-  ) && !turnstileToken;
+  const isAwaitingTurnstile =
+    process.env.NODE_ENV !== "development" &&
+    Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY) &&
+    !turnstileToken;
 
   return (
     <div className="flex flex-col gap-4">
