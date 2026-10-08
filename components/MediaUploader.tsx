@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 
 import { AdModal } from "@/components/AdModal";
-import { AdsterraPopunder } from "@/components/AdsterraPopunder";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -102,7 +101,6 @@ export function MediaUploader({
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileFailed, setTurnstileFailed] = useState(false);
   const [adPending, setAdPending] = useState(false);
-  const [popunderFire, setPopunderFire] = useState(false);
 
   const [turnstileEpoch, setTurnstileEpoch] = useState(0);
 
@@ -277,8 +275,6 @@ export function MediaUploader({
     scanPassedRef.current = false;
     uploadResultRef.current = null;
     setAdPending(true);
-    // Popunder butuh user gesture: klik "Unggah" ini adalah gesture-nya.
-    setPopunderFire(true);
 
     // (Tugas 1) Unggah ke server berjalan secara PARALEL dengan iklan & scan
     void (async () => {
@@ -500,8 +496,6 @@ export function MediaUploader({
 
       {/* Iklan ditampilkan selama `adPending`. Scan berjalan di balik layar. */}
       <AdModal open={step === "processing" && adPending} onComplete={handleAdComplete} />
-      {/* Popunder dibuka sekali per halaman, tepat saat klik unggah (gesture). */}
-      <AdsterraPopunder fire={popunderFire} />
     </div>
   );
 }
