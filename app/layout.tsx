@@ -35,6 +35,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="id" className={`${geistSans.variable} ${geistMono.variable}`}>
       <head>
+        {/* Verifikasi situs AdSense (google-adsense-account). */}
+        <meta
+          name="google-adsense-account"
+          content="ca-pub-8488653214573915"
+        />
         {/* Loader Google AdSense. Statis di <head> supaya terlihat Google
             crawler (verifikasi situs) dan selalu muat sebelum unit dipush.
             Client ID di sini hanya boleh dua-duanya sinkron dengan
