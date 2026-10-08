@@ -13,14 +13,14 @@ import { Progress, ProgressIndicator, ProgressTrack } from "@/components/ui/prog
 import { Button } from "@/components/ui/button";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 
-/** Durasi tonton iklan, detik. Env `NEXT_PUBLIC_AD_DURATION_SECONDS`, default 8. */
+/** Durasi tonton iklan, detik. Env `NEXT_PUBLIC_AD_DURATION_SECONDS`, default 20. */
 function getAdDurationSeconds(): number {
   const raw = process.env.NEXT_PUBLIC_AD_DURATION_SECONDS;
-  if (!raw) return 8;
+  if (!raw) return 20;
   const parsed = Number.parseInt(raw, 10);
   // Nilai rusak atau absurd tidak boleh dipakai: timer negatif akan selesai
   // seketika, timer satu jam menahan pengguna tanpa alasan.
-  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 60) return 8;
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 60) return 20;
   return parsed;
 }
 
