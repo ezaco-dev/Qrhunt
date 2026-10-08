@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { HomeIcon } from "lucide-react";
 
-import { AdsterraBanner } from "@/components/AdsterraBanner";
+import { AdsenseAdUnit } from "@/components/AdsenseAdUnit";
 import { MediaTypeBadge, MediaViewer } from "@/components/MediaViewer";
 import { QrActions } from "@/components/QrActions";
 import { QrKickedNotice } from "@/components/QrKickedNotice";
@@ -89,17 +89,11 @@ export default async function MediaSubIdPage(props: {
         </p>
         <ReportButton qrCodeId={media.qr_code_id} />
         <div className="mt-4 flex w-full justify-center">
-          <AdsterraBanner
-            atKey={
-              process.env.NEXT_PUBLIC_ADSTERRA_BOTTOM_KEY ||
-              "878490fbeb0aa172c7c292c05a09c5d2"
-            }
-            scriptUrlEnv={
-              process.env.NEXT_PUBLIC_ADSTERRA_BOTTOM_SCRIPT_URL ||
-              "https://bauval.org/21/878490fbeb0aa172c7c292c05a09c5d2"
-            }
+          <AdsenseAdUnit
+            slot={process.env.NEXT_PUBLIC_ADSENSE_SLOT_BOTTOM || ""}
             width={300}
             height={250}
+            format="rectangle"
           />
         </div>
       </footer>

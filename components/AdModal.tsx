@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Progress, ProgressIndicator, ProgressTrack } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { AdsterraBanner } from "@/components/AdsterraBanner";
+import { AdsenseAdUnit } from "@/components/AdsenseAdUnit";
 
 /** Durasi tonton iklan, detik. Env `NEXT_PUBLIC_AD_DURATION_SECONDS`, default 20. */
 function getAdDurationSeconds(): number {
@@ -140,17 +140,11 @@ export function AdModal({ open, onComplete }: AdModalProps) {
         </Progress>
 
         <div className="my-2 flex justify-center">
-          <AdsterraBanner
-            atKey={
-              process.env.NEXT_PUBLIC_ADSTERRA_MODAL_KEY ||
-              "878490fbeb0aa172c7c292c05a09c5d2"
-            }
-            scriptUrlEnv={
-              process.env.NEXT_PUBLIC_ADSTERRA_MODAL_SCRIPT_URL ||
-              "https://bauval.org/21/878490fbeb0aa172c7c292c05a09c5d2"
-            }
+          <AdsenseAdUnit
+            slot={process.env.NEXT_PUBLIC_ADSENSE_SLOT_MODAL || ""}
             width={300}
             height={250}
+            format="rectangle"
           />
         </div>
 
