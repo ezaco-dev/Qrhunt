@@ -45,7 +45,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           src="https://cdn.ampproject.org/v0/amp-auto-ads-0.1.js"
         />
       </head>
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        {/* @ts-expect-error AMP custom element */}
+        <amp-auto-ads
+          type="adsense"
+          data-ad-client="ca-pub-8488653214573915"
+        />
+        {children}
+      </body>
     </html>
   );
 }
