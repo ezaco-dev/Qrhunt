@@ -50,7 +50,10 @@ export function AdsenseAdUnit({
     const ins = insRef.current;
     if (pushedInsElements.has(ins)) return;
 
-    if (!loadedClients.has(client)) {
+    if (
+      !loadedClients.has(client) &&
+      !document.querySelector('script[src*="adsbygoogle.js"]')
+    ) {
       loadedClients.add(client);
       const s = document.createElement("script");
       s.async = true;

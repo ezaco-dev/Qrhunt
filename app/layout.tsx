@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import "./globals.css";
@@ -33,6 +34,17 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="id" className={`${geistSans.variable} ${geistMono.variable}`}>
+      <head>
+        {/* Loader Google AdSense. Statis di <head> supaya terlihat Google
+            crawler (verifikasi situs) dan selalu muat sebelum unit dipush.
+            Client ID di sini hanya boleh dua-duanya sinkron dengan
+            NEXT_PUBLIC_ADSENSE_CLIENT. */}
+        <Script
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8488653214573915"
+          strategy="beforeInteractive"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className="antialiased">{children}</body>
     </html>
   );
