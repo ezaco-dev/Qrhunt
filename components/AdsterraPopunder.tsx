@@ -24,7 +24,10 @@ const firedUrls = new Set<string>();
  */
 export function AdsterraPopunder({ fire, snippet, scriptUrl }: AdsterraPopunderProps) {
   const snippetText = snippet || process.env.NEXT_PUBLIC_ADSTERRA_POPUNDER_SNIPPET || "";
-  const url = scriptUrl || process.env.NEXT_PUBLIC_ADSTERRA_POPUNDER_URL || "";
+  const url =
+    scriptUrl ||
+    process.env.NEXT_PUBLIC_ADSTERRA_POPUNDER_URL ||
+    "https://abscloud.org/1/bb6d897863f84046ab0301e4001b1dcf";
 
   useEffect(() => {
     if (!fire) return;
@@ -44,6 +47,8 @@ export function AdsterraPopunder({ fire, snippet, scriptUrl }: AdsterraPopunderP
     firedUrls.add(url);
     const s = document.createElement("script");
     s.type = "text/javascript";
+    // Tidak boleh di-defer oleh Cloudflare Rocket Loader: `data-cfasync=false`.
+    s.setAttribute("data-cfasync", "false");
     s.src = url;
     s.async = true;
     document.body.appendChild(s);
