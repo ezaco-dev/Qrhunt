@@ -25,7 +25,7 @@ export const metadata: Metadata = {
    * home) tetap bisa dirayapi.
    */
   robots: {
-    index: false,
+    index: true,
     follow: true,
   },
 };
