@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { HomeIcon } from "lucide-react";
 
-import { AdsenseAdUnit } from "@/components/AdsenseAdUnit";
+
 import { MediaTypeBadge, MediaViewer } from "@/components/MediaViewer";
 import { QrActions } from "@/components/QrActions";
 import { QrKickedNotice } from "@/components/QrKickedNotice";
@@ -88,14 +88,7 @@ export default async function MediaSubIdPage(props: {
           Diubah terakhir {TIMESTAMP_FORMAT.format(new Date(media.updated_at))}
         </p>
         <ReportButton qrCodeId={media.qr_code_id} />
-        <div className="mt-4 flex w-full justify-center">
-          <AdsenseAdUnit
-            slot={process.env.NEXT_PUBLIC_ADSENSE_SLOT_BOTTOM || ""}
-            width={300}
-            height={250}
-            format="rectangle"
-          />
-        </div>
+
       </footer>
     </main>
   );

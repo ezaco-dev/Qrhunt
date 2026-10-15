@@ -30,7 +30,7 @@ export function DialogBackdrop({ className, ...props }: DialogPrimitive.Backdrop
 /**
  * Kotak dialog yang terlihat.
  *
- * `showCloseButton={false}` dipakai `AdModal`: tombol tutup jadi celah
+ * `showCloseButton={false}` menyembunyikan tombol tutup sehingga kontrol
  * melewati timer iklan, jadi kontrol sepenuhnya milik komponen itu.
  */
 export function DialogPopup({

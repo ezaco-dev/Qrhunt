@@ -33,26 +33,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="id" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <head>
-        <script
-          async
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8488653214573915"
-          crossOrigin="anonymous"
-        />
-        <script
-          async
-          custom-element="amp-auto-ads"
-          src="https://cdn.ampproject.org/v0/amp-auto-ads-0.1.js"
-        />
-      </head>
-      <body className="antialiased">
-        {/* @ts-expect-error AMP custom element */}
-        <amp-auto-ads
-          type="adsense"
-          data-ad-client="ca-pub-8488653214573915"
-        />
-        {children}
-      </body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

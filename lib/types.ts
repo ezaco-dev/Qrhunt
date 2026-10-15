@@ -65,7 +65,7 @@ export interface NsfwScanResult {
 }
 
 /** Batas durasi video, detik. */
-export const MAX_VIDEO_DURATION_SECONDS = 10;
+export const MAX_VIDEO_DURATION_SECONDS = 45;
 
 /** Batas ukuran unggahan, 4 MB. */
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;

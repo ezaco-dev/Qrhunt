@@ -3,21 +3,13 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   CheckCircleIcon,
-  FileTextIcon,
-  FilmIcon,
-  ImageIcon,
-  ImagesIcon,
   Loader2Icon,
   ShieldAlertIcon,
   UploadIcon,
 } from "lucide-react";
 
-import { AdModal } from "@/components/AdModal";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import {
   getNsfwModel,
   isNsfwModelLoading,
@@ -27,7 +19,6 @@ import {
 import { PLACEHOLDER_TOKEN } from "@/lib/turnstile-shared";
 import {
   ACCEPTED_MIME_TYPES,
-  MAX_TEXT_LENGTH,
   MAX_UPLOAD_BYTES,
   MAX_VIDEO_DURATION_SECONDS,
   type ApiResult,
@@ -36,34 +27,23 @@ import {
 } from "@/lib/types";
 import { validateMediaFile } from "@/lib/validation";
 
-/**
- * Langkah wizard.
- *
- * `processing` = iklan + scan NSFW berjalan BERSAMAAN. Setelah keduanya
- * selesai dan scan lolos, upload otomatis dimulai. Kalau scan gagal/ditolak,
- * wizard kembali ke `pick` tanpa menunggu iklan selesai.
- */
 type Step = "pick" | "processing" | "done";
 
-/** Tipe media yang butuh berkas (teks tidak perlu). */
 type FileMediaType = Exclude<MediaType, "text">;
 
-const MEDIA_TABS: readonly {
-  value: MediaType;
-  label: string;
-  icon: typeof ImageIcon;
-}[] = [
-  { value: "image", label: "Gambar", icon: ImageIcon },
-  { value: "gif", label: "GIF", icon: ImagesIcon },
-  { value: "video", label: "Video", icon: FilmIcon },
-  { value: "text", label: "Teks", icon: FileTextIcon },
-];
-
-function acceptFor(mediaType: MediaType): string | undefined {
-  const types = ACCEPTED_MIME_TYPES[mediaType];
-  if (!types || types.length === 0) return undefined;
-  return types.join(",");
+/** MIME → MediaType. GIF tetap didukung meski tidak ada tab terpisah. */
+function detectMediaType(mime: string): FileMediaType {
+  if (mime === "image/gif") return "gif";
+  if (mime.startsWith("video/")) return "video";
+  return "image";
 }
+
+/** Semua format file yang diterima (image + gif + video). */
+const ALL_ACCEPTED = [
+  ...ACCEPTED_MIME_TYPES.image,
+  ...ACCEPTED_MIME_TYPES.gif,
+  ...ACCEPTED_MIME_TYPES.video,
+].join(",");
 
 export interface MediaUploaderProps {
   qrCodeId: string;
@@ -72,14 +52,9 @@ export interface MediaUploaderProps {
 }
 
 /**
- * Wizard pasang/ganti media: `pick -> processing (ad + scan paralel) -> done`.
+ * Wizard pasang/ganti media: `pick -> processing (scan + upload paralel) -> done`.
  *
- * Iklan dan pemindaian NSFW berjalan BERSAMAAN: user menonton iklan SEMENTARA
- * model NSFWJS dimuat dan media dipindai. Setelah keduanya selesai dan media
- * lolos, upload otomatis dimulai.
- *
- * Durasi video dibaca dan diperiksa SEBELUM processing. Menahan orang 8 detik
- * iklan hanya untuk memberitahu "video Anda terlalu panjang" tidak masuk akal.
+ * Satu tombol file — tipe media otomatis dideteksi dari MIME.
  *
  * `performUpload` dideklarasikan SEBELUM `handleSubmit` karena yang kedua
  * memakai yang pertama di dalam callback.
@@ -90,9 +65,8 @@ export function MediaUploader({
   onUploaded,
 }: MediaUploaderProps) {
   const [step, setStep] = useState<Step>("pick");
-  const [mediaType, setMediaType] = useState<MediaType>("image");
   const [file, setFile] = useState<File | null>(null);
-  const [textContent, setTextContent] = useState("");
+  const [mediaType, setMediaType] = useState<FileMediaType>("image");
   const [error, setError] = useState<string | null>(null);
   const [, setNsfwScanResult] = useState<NsfwScanResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -100,7 +74,6 @@ export function MediaUploader({
   const [uploadedMediaId, setUploadedMediaId] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileFailed, setTurnstileFailed] = useState(false);
-  const [adPending, setAdPending] = useState(false);
 
   const [turnstileEpoch, setTurnstileEpoch] = useState(0);
 
@@ -112,36 +85,17 @@ export function MediaUploader({
 
   const durationRef = useRef<number | undefined>(undefined);
 
-  // Ref untuk koordinasi 3-arah paralel: ad + scan + upload server.
   const scanDoneRef = useRef(false);
-  const adDoneRef = useRef(false);
   const uploadDoneRef = useRef(false);
   const scanPassedRef = useRef(false);
   const uploadResultRef = useRef<{ mediaId: string } | null>(null);
 
-  const isFileType = mediaType !== "text";
-  const isBusy = isScanning || isUploading || adPending;
+  const isBusy = isScanning || isUploading;
 
   const effectiveTurnstileToken = useMemo(() => {
     const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
     return siteKey && turnstileToken ? turnstileToken : PLACEHOLDER_TOKEN;
   }, [turnstileToken]);
-
-  const clearInput = useCallback(() => {
-    setFile(null);
-    setTextContent("");
-    setError(null);
-    setNsfwScanResult(null);
-    setIsScanning(false);
-    setIsUploading(false);
-    setAdPending(false);
-    durationRef.current = undefined;
-    scanDoneRef.current = false;
-    adDoneRef.current = false;
-    uploadDoneRef.current = false;
-    scanPassedRef.current = false;
-    uploadResultRef.current = null;
-  }, []);
 
   const handleFileChange = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -153,7 +107,10 @@ export function MediaUploader({
 
       if (!nextFile) return;
 
-      if (mediaType === "video") {
+      const detected = detectMediaType(nextFile.type);
+      setMediaType(detected);
+
+      if (detected === "video") {
         try {
           durationRef.current = await readVideoDuration(nextFile);
         } catch (err) {
@@ -163,27 +120,17 @@ export function MediaUploader({
         }
       }
 
-      const validation = validateMediaFile(nextFile, mediaType, durationRef.current);
+      const validation = validateMediaFile(nextFile, detected, durationRef.current);
       if (!validation.ok) {
         setError(validation.error ?? "Berkas tidak valid.");
         setFile(null);
       }
     },
-    [mediaType],
-  );
-
-  const handleTextChange = useCallback(
-    (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setTextContent(event.target.value);
-      setError(null);
-    },
     [],
   );
 
   const checkCompletion = useCallback(() => {
-    if (!adDoneRef.current || !scanDoneRef.current || !uploadDoneRef.current) {
-      return;
-    }
+    if (!scanDoneRef.current || !uploadDoneRef.current) return;
     if (!scanPassedRef.current || !uploadResultRef.current) return;
 
     setUploadedMediaId(uploadResultRef.current.mediaId);
@@ -201,9 +148,7 @@ export function MediaUploader({
       form.append("mediaType", mediaType);
       form.append("turnstileToken", effectiveTurnstileToken);
 
-      if (mediaType === "text") {
-        form.append("textContent", textContent.trim());
-      } else if (file) {
+      if (file) {
         form.append("file", file);
       } else {
         throw new Error("Tidak ada berkas yang dipilih.");
@@ -229,7 +174,6 @@ export function MediaUploader({
       if (!payload.ok) {
         setError(payload.error);
         setStep("pick");
-        setAdPending(false);
         renewTurnstileToken();
         return null;
       }
@@ -238,45 +182,27 @@ export function MediaUploader({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unggahan gagal.");
       setStep("pick");
-      setAdPending(false);
       renewTurnstileToken();
       return null;
     } finally {
       setIsUploading(false);
     }
-  }, [
-    effectiveTurnstileToken,
-    file,
-    mediaType,
-    qrCodeId,
-    renewTurnstileToken,
-    textContent,
-  ]);
+  }, [effectiveTurnstileToken, file, mediaType, qrCodeId, renewTurnstileToken]);
 
-  /**
-   * Mulai processing 3-arah secara PARALEL: iklan + scan NSFW + unggah ke server.
-   *
-   * Ketiganya berjalan bersamaan: saat user menonton iklan, media juga dipindai
-   * dan diunggah ke server/Cloudinary secara latar belakang. Saat iklan selesai,
-   * unggahan sudah siap.
-   */
   const handleSubmit = useCallback(() => {
-    if (mediaType !== "text" && !file) {
+    if (!file) {
       setError("Tidak ada berkas yang dipilih.");
-      setStep("pick");
       return;
     }
 
     setStep("processing");
     setError(null);
     scanDoneRef.current = false;
-    adDoneRef.current = false;
     uploadDoneRef.current = false;
     scanPassedRef.current = false;
     uploadResultRef.current = null;
-    setAdPending(true);
 
-    // (Tugas 1) Unggah ke server berjalan secara PARALEL dengan iklan & scan
+    // (1) Upload ke server
     void (async () => {
       const res = await performUpload();
       if (res) {
@@ -286,56 +212,41 @@ export function MediaUploader({
       }
     })();
 
-    // (Tugas 2) Scan Client NSFW (jika gambar/video/gif)
-    if (mediaType === "text") {
-      scanDoneRef.current = true;
-      scanPassedRef.current = true;
-      setIsScanning(false);
-      checkCompletion();
-    } else if (file) {
-      setIsScanning(true);
-      void (async () => {
-        try {
-          await getNsfwModel();
+    // (2) Scan Client NSFW
+    setIsScanning(true);
+    void (async () => {
+      try {
+        await getNsfwModel();
 
-          const result = await scanMediaFile(file, mediaType as FileMediaType);
-          setNsfwScanResult(result);
+        const result = await scanMediaFile(file, mediaType as FileMediaType);
+        setNsfwScanResult(result);
 
-          if (result.isBlocked) {
-            setError(
-              `Berkas ditolak: konten terdeteksi "${result.worstCategory}" ` +
-                `(skor ${result.worstScore.toFixed(2)}).`,
-            );
-            setStep("pick");
-            setAdPending(false);
-            renewTurnstileToken();
-            return;
-          }
-
-          scanDoneRef.current = true;
-          scanPassedRef.current = true;
-          checkCompletion();
-        } catch (err) {
+        if (result.isBlocked) {
           setError(
-            err instanceof Error ? `Pemindaian gagal: ${err.message}` : "Pemindaian gagal.",
+            `Berkas ditolak: konten terdeteksi "${result.worstCategory}" ` +
+              `(skor ${result.worstScore.toFixed(2)}).`,
           );
           setStep("pick");
-          setAdPending(false);
           renewTurnstileToken();
-        } finally {
-          setIsScanning(false);
+          return;
         }
-      })();
-    }
+
+        scanDoneRef.current = true;
+        scanPassedRef.current = true;
+        checkCompletion();
+      } catch (err) {
+        setError(
+          err instanceof Error ? `Pemindaian gagal: ${err.message}` : "Pemindaian gagal.",
+        );
+        setStep("pick");
+        renewTurnstileToken();
+      } finally {
+        setIsScanning(false);
+      }
+    })();
   }, [checkCompletion, file, mediaType, performUpload, renewTurnstileToken]);
 
-  const handleAdComplete = useCallback(() => {
-    adDoneRef.current = true;
-    setAdPending(false);
-    checkCompletion();
-  }, [checkCompletion]);
-
-  const canSubmit = isFileType ? Boolean(file) : textContent.trim().length > 0;
+  const canSubmit = Boolean(file);
 
   const isAwaitingTurnstile =
     process.env.NODE_ENV !== "development" &&
@@ -352,68 +263,33 @@ export function MediaUploader({
       ) : null}
 
       {step === "pick" ? (
-        <Tabs
-          value={mediaType}
-          onValueChange={(value) => {
-            setMediaType(value as MediaType);
-            clearInput();
-          }}
-        >
-          <TabsList className="w-full">
-            {MEDIA_TABS.map((tab) => (
-              <TabsTab key={tab.value} value={tab.value} className="flex-1">
-                <tab.icon />
-                {tab.label}
-              </TabsTab>
-            ))}
-          </TabsList>
-
-          {MEDIA_TABS.map((tab) => (
-            <TabsPanel key={tab.value} value={tab.value} className="pt-2">
-              {tab.value === "text" ? (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="media-text">Teks yang ditampilkan</Label>
-                  <Textarea
-                    id="media-text"
-                    name="textContent"
-                    maxLength={MAX_TEXT_LENGTH}
-                    rows={5}
-                    placeholder="Tulis apa saja. Siapa pun bisa menggantinya nanti."
-                    value={textContent}
-                    onChange={handleTextChange}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {textContent.length}/{MAX_TEXT_LENGTH} karakter
-                  </p>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="media-file">Berkas {tab.label}</Label>
-                  <input
-                    id="media-file"
-                    type="file"
-                    accept={acceptFor(tab.value)}
-                    onChange={handleFileChange}
-                    className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-medium file:text-secondary-foreground hover:file:bg-secondary/80"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Maksimal {MAX_UPLOAD_BYTES / (1024 * 1024)} MB
-                    {tab.value === "video"
-                      ? `, durasi ${MAX_VIDEO_DURATION_SECONDS} detik`
-                      : ""}
-                    .
-                  </p>
-                </div>
-              )}
-            </TabsPanel>
-          ))}
-        </Tabs>
+        <div className="flex flex-col gap-3">
+          <label
+            htmlFor="media-file"
+            className="flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed border-muted-foreground/30 px-6 py-10 text-center transition-colors hover:border-primary/50 hover:bg-muted/30"
+          >
+            <UploadIcon className="size-8 text-muted-foreground" />
+            <span className="text-sm font-medium">
+              {file ? file.name : "Pilih foto atau video"}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              Maks {MAX_UPLOAD_BYTES / (1024 * 1024)} MB
+              {" · "}video maks {MAX_VIDEO_DURATION_SECONDS} detik
+            </span>
+          </label>
+          <input
+            id="media-file"
+            type="file"
+            accept={ALL_ACCEPTED}
+            onChange={handleFileChange}
+            className="sr-only"
+          />
+        </div>
       ) : null}
 
-      {/* Setelah iklan selesai tapi scan/upload masih jalan, tampilkan indikator */}
-      {step === "processing" && !adPending ? (
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <Loader2Icon className="size-6 animate-spin" />
+      {step === "processing" ? (
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <Loader2Icon className="size-8 animate-spin text-primary" />
           <p className="text-sm font-medium">
             {isScanning
               ? isNsfwModelLoading()
@@ -433,11 +309,16 @@ export function MediaUploader({
       ) : null}
 
       {step === "done" ? (
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <CheckCircleIcon className="size-6" />
-          <p className="text-sm font-medium">Media tersimpan.</p>
-          <Button onClick={() => onUploaded(uploadedMediaId ?? undefined)}>
-            Selesai
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <div className="flex size-14 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30">
+            <CheckCircleIcon className="size-7 text-emerald-600 dark:text-emerald-400" />
+          </div>
+          <p className="text-lg font-semibold">Media tersimpan!</p>
+          <p className="text-sm text-muted-foreground">
+            QR code Anda sekarang menampilkan media baru.
+          </p>
+          <Button onClick={() => onUploaded(uploadedMediaId ?? undefined)} size="lg" className="mt-2">
+            Lihat hasilnya
           </Button>
         </div>
       ) : null}
@@ -488,14 +369,12 @@ export function MediaUploader({
         <Button
           onClick={handleSubmit}
           disabled={!canSubmit || isBusy || isAwaitingTurnstile}
+          size="lg"
         >
           <UploadIcon />
           {hasExistingMedia ? "Ganti media" : "Pasang media"}
         </Button>
       ) : null}
-
-      {/* Iklan ditampilkan selama `adPending`. Scan berjalan di balik layar. */}
-      <AdModal open={step === "processing" && adPending} onComplete={handleAdComplete} />
     </div>
   );
 }

@@ -2,17 +2,10 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PencilIcon, UploadIcon } from "lucide-react";
+import { ArrowLeftIcon, PencilIcon, UploadIcon } from "lucide-react";
 
 import { MediaUploader } from "@/components/MediaUploader";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogHeader,
-  DialogPopup,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 export interface QrActionsProps {
   qrCodeId: string;
@@ -20,16 +13,11 @@ export interface QrActionsProps {
 }
 
 /**
- * Tombol "Pasang Media" / "Ganti Media" beserta dialognya.
+ * Tombol "Pasang Media" / "Ganti Media" beserta overlay full-screen-nya.
  *
- * `MediaUploader` diberi `key` berisi `qrCodeId`. Kalau dialog dibuka lagi
+ * `MediaUploader` diberi `key` berisi `qrCodeId`. Kalau overlay dibuka lagi
  * untuk QR yang berbeda, React memasang ulang seluruh subtree sehingga state
- * wizard ter-reset tanpa perlu efek samping (effect cleanup, tombol reset
- * manual, dan seterusnya). Reset manual selalu menyisakan celah di mana state
- * dari QR sebelumnya masih terbaca.
- *
- * Bundel NSFWJS + TensorFlow.js hanya dimuat ketika dialog benar-benar dibuka,
- * karena model baru dijalankan saat wizard berjalan.
+ * wizard ter-reset.
  */
 export function QrActions({ qrCodeId, hasExistingMedia }: QrActionsProps) {
   const router = useRouter();
@@ -48,29 +36,45 @@ export function QrActions({ qrCodeId, hasExistingMedia }: QrActionsProps) {
   );
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <>
       <Button onClick={() => setOpen(true)} variant="outline" className="w-full">
         {hasExistingMedia ? <PencilIcon /> : <UploadIcon />}
         {hasExistingMedia ? "Ganti media" : "Pasang media"}
       </Button>
 
-      <DialogPopup className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            {hasExistingMedia ? "Ganti media" : "Pasang media"}
-          </DialogTitle>
-          <DialogDescription>
-            Tidak perlu login. Siapa pun yang tahu QR ini bisa menggantinya.
-          </DialogDescription>
-        </DialogHeader>
+      {open ? (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          {/* Header */}
+          <header className="flex items-center gap-3 border-b px-4 py-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setOpen(false)}
+              aria-label="Kembali"
+            >
+              <ArrowLeftIcon className="size-5" />
+            </Button>
+            <h1 className="text-lg font-semibold">
+              {hasExistingMedia ? "Ganti media" : "Pasang media"}
+            </h1>
+          </header>
 
-        <MediaUploader
-          key={qrCodeId}
-          qrCodeId={qrCodeId}
-          hasExistingMedia={hasExistingMedia}
-          onUploaded={handleUploaded}
-        />
-      </DialogPopup>
-    </Dialog>
+          {/* Content — scrollable, centered */}
+          <div className="flex flex-1 items-start justify-center overflow-y-auto p-4">
+            <div className="w-full max-w-lg py-4">
+              <p className="mb-4 text-sm text-muted-foreground">
+                Tidak perlu login. Siapa pun yang tahu QR ini bisa menggantinya.
+              </p>
+              <MediaUploader
+                key={qrCodeId}
+                qrCodeId={qrCodeId}
+                hasExistingMedia={hasExistingMedia}
+                onUploaded={handleUploaded}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
